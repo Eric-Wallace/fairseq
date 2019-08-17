@@ -16,7 +16,7 @@ from copy import deepcopy
 import torch
 
 from fairseq import checkpoint_utils, distributed_utils, options, progress_bar, tasks, utils
-from fairseq.data import iterators
+from fairseq.data import iterators, encoders
 from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 
@@ -157,8 +157,6 @@ def hotflip_attack(averaged_grad, embedding_matrix, trigger_token_ids,
 #     train_meter.stop()
 #     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
-
-
 def main(args, init_distributed=False):
     utils.import_user_module(args)
 
@@ -172,14 +170,6 @@ def main(args, init_distributed=False):
     
     print(args)
 
-    # Build model and criterion
-    model = task.build_model(args)
-    criterion = task.build_criterion(args)
-
-    # Load the latest checkpoint if one is available and restore the
-    # corresponding train iterator
-    extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
-    
     task = tasks.setup_task(args)
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
@@ -213,9 +203,34 @@ def main(args, init_distributed=False):
     valid_subsets = args.valid_subset.split(',')
     ####valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
 
+    # Initialize generator
+    generator = task.build_generator(args)
+
     generate_and_validate_trigger(args, trainer, epoch_itr)    
     
-        
+    
+def make_batches(args, task, encode_fn):
+    lines = ['How are you']
+    tokens = [
+        task.source_dictionary.encode_line(
+            encode_fn(src_str), add_if_not_exist=False
+        ).long()
+        for src_str in lines
+    ]
+    lengths = torch.LongTensor([t.numel() for t in tokens])
+    itr = task.get_batch_iterator(
+        dataset=task.build_dataset_for_inference(tokens, lengths),
+        max_tokens=4000,
+        max_sentences=10,
+        max_positions=512
+    ).next_epoch_itr(shuffle=False)
+    return itr
+    # for batch in itr:
+    #     yield Batch(
+    #         ids=batch['id'],
+    #         src_tokens=batch['net_input']['src_tokens'], src_lengths=batch['net_input']['src_lengths'],
+    #     )
+
 def generate_and_validate_trigger(args, trainer, epoch_itr):    
     add_hooks(trainer.model) # add gradient hooks to embeddings    
     embedding_weight = get_embedding_weight(trainer.model) # save the embedding matrix
@@ -230,6 +245,27 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
     )
     itr = iterators.GroupedIterator(itr, update_freq)
     
+
+    # Handle tokenization and BPE
+    tokenizer = encoders.build_tokenizer(args)
+    bpe = encoders.build_bpe(args)
+
+    def encode_fn(x):
+        if tokenizer is not None:
+            x = tokenizer.encode(x)
+        if bpe is not None:
+            x = bpe.encode(x)
+        return x
+
+    def decode_fn(x):
+        if bpe is not None:
+            x = bpe.decode(x)
+        if tokenizer is not None:
+            x = tokenizer.decode(x)
+        return x
+
+    itr = make_batches(args, trainer.task, encode_fn)
+
     # initialize trigger
     num_trigger_tokens = 5        
     trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
@@ -274,6 +310,9 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
                 trigger_token_ids = deepcopy(curr_best_trigger_tokens)
                 print("Loss: " + str(best_loss.data.item()))
                 print(trigger_token_ids)
+                print(encode_fn("Hello"))
+                print(trainer.task.target_dictionary.string(torch.LongTensor(trigger_token_ids), None))
+                print(decode_fn(trainer.task.target_dictionary.string(torch.LongTensor(trigger_token_ids), None)))
 
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""

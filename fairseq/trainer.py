@@ -218,7 +218,6 @@ class Trainer(object):
 
     def train_step(self, samples, dummy_batch=False, raise_oom=False):
         """Do forward, backward and parameter update."""
-        print("step")
         if self._dummy_batch is None:
             self._dummy_batch = samples[0]
 
@@ -232,7 +231,6 @@ class Trainer(object):
 
         # forward and backward pass
         logging_outputs, sample_sizes, ooms = [], [], 0
-        print(len(samples))
         for i, sample in enumerate(samples):
             sample = self._prepare_sample(sample)
             if sample is None:
@@ -363,8 +361,8 @@ class Trainer(object):
                 self.optimizer.multiply_grads(self.args.distributed_world_size / float(sample_size))
 
             # clip grads
-            grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
-            self._prev_grad_norm = grad_norm
+            # grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
+            # self._prev_grad_norm = grad_norm
 
             # take an optimization step
             #self.optimizer.step()
@@ -403,6 +401,66 @@ class Trainer(object):
         self.meters['train_wall'].stop()
 
         return logging_output
+
+
+    def get_trigger_grad(self, samples, trigger):
+        self._set_seed()
+        self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
+        self.criterion.train()
+        self.zero_grad()
+        assert len(samples) == 1
+
+        #for i, sample in enumerate(samples):
+        sample = self._prepare_sample(samples[0])
+        batch_size = sample['net_input']['src_tokens'].shape[0]
+        # create Trigger tensor
+        trigger_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
+        trigger_tensor = trigger_tensor.unsqueeze(dim=0).repeat(batch_size,1)
+
+        # copy original inputs so we can restore them
+        original_src = sample['net_input']['src_tokens'].clone()
+        original_length = sample['net_input']['src_lengths'].clone()
+        
+        # concenate trigger to input
+        sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
+        sample['net_input']['src_lengths'] += len(trigger)
+
+        # fills extracted_grads with the gradient w.r.t. the embedding
+        self.task.train_step(sample, self.model, self.criterion, self.optimizer, False)
+        
+        # restore original inputs
+        sample['net_input']['src_tokens'] = original_src
+        sample['net_input']['src_lengths'] = original_length
+        return sample['net_input']['src_lengths']
+    
+    def get_trigger_loss(self, samples, trigger):
+        self._set_seed()
+        self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
+        self.criterion.train()
+        self.zero_grad()
+        assert len(samples) == 1
+
+        sample = self._prepare_sample(samples[0])
+        batch_size = sample['net_input']['src_tokens'].shape[0]
+        # create Trigger tensor
+        trigger_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
+        trigger_tensor = trigger_tensor.unsqueeze(dim=0).repeat(batch_size,1)
+
+        # copy original inputs so we can restore them
+        original_src = sample['net_input']['src_tokens'].clone()
+        original_length = sample['net_input']['src_lengths'].clone()
+        
+        # concenate trigger to input
+        sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
+        sample['net_input']['src_lengths'] += len(trigger)
+            
+        loss, _, __ = self.criterion(self.model, sample)
+        
+        # restore original inputs
+        sample['net_input']['src_tokens'] = original_src
+        sample['net_input']['src_lengths'] = original_length
+
+        return loss
 
     def valid_step(self, sample, raise_oom=False):
         """Do forward pass in evaluation mode."""
@@ -541,3 +599,4 @@ class Trainer(object):
         torch.manual_seed(seed)
         if self.cuda:
             torch.cuda.manual_seed(seed)
+

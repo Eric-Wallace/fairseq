@@ -425,7 +425,10 @@ class Trainer(object):
         sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
         sample['net_input']['src_lengths'] += len(trigger)
 
+<<<<<<< HEAD
         print("input size", sample['net_input']['src_tokens'].shape)
+=======
+>>>>>>> 8bd0c2f572c61f5a436faea88c2d566e3f78ad62
         # fills extracted_grads with the gradient w.r.t. the embedding
         self.task.train_step(sample, self.model, self.criterion, self.optimizer, False)
         
@@ -454,7 +457,11 @@ class Trainer(object):
         # concenate trigger to input
         sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
         sample['net_input']['src_lengths'] += len(trigger)
+<<<<<<< HEAD
 
+=======
+            
+>>>>>>> 8bd0c2f572c61f5a436faea88c2d566e3f78ad62
         loss, _, __ = self.criterion(self.model, sample)
         
         # restore original inputs

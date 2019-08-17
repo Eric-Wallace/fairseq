@@ -171,16 +171,29 @@ def main(args, init_distributed=False):
     torch.manual_seed(args.seed)
     
     print(args)
+
+    # Build model and criterion
+    model = task.build_model(args)
+    criterion = task.build_criterion(args)
+
+    # Load the latest checkpoint if one is available and restore the
+    # corresponding train iterator
+    extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+    
+>>>>>>> 8bd0c2f572c61f5a436faea88c2d566e3f78ad62
     task = tasks.setup_task(args)
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
     for valid_sub_split in args.valid_subset.split(','):
         task.load_dataset(valid_sub_split, combine=False, epoch=0)
 
+<<<<<<< HEAD
     # Build model and criterion
     model = task.build_model(args)
     criterion = task.build_criterion(args)
 
+=======
+>>>>>>> 8bd0c2f572c61f5a436faea88c2d566e3f78ad62
     print(model)
     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     print('| num. model params: {} (num. trained: {})'.format(
@@ -196,6 +209,7 @@ def main(args, init_distributed=False):
         args.max_sentences,
     ))
 
+<<<<<<< HEAD
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
     extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)    
@@ -203,6 +217,13 @@ def main(args, init_distributed=False):
     # Evaluate without the trigger
     valid_subsets = args.valid_subset.split(',')
     ####valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+=======
+    
+
+    # Evaluate without the trigger
+    valid_subsets = args.valid_subset.split(',')
+    valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+>>>>>>> 8bd0c2f572c61f5a436faea88c2d566e3f78ad62
 
     generate_and_validate_trigger(args, trainer, epoch_itr)    
     

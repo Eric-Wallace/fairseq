@@ -143,6 +143,8 @@ class SequenceGenerator(object):
             )
 
         # compute the encoder output for each beam
+        print(encoder_input)
+        exit()
         encoder_outs = model.forward_encoder(encoder_input)
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
         new_order = new_order.to(src_tokens.device).long()

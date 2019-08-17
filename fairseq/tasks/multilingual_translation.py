@@ -269,6 +269,8 @@ class MultilingualTranslationTask(FairseqTask):
 
     def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
         model.train()
+        print("YAAAH")
+        exit()
         agg_loss, agg_sample_size, agg_logging_output = 0., 0., {}
         for lang_pair in self.model_lang_pairs:
             if sample[lang_pair] is None or len(sample[lang_pair]) == 0:

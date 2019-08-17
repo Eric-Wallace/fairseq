@@ -10,6 +10,8 @@ Train a new model on one or across multiple GPUs.
 import collections
 import math
 import random
+import numpy as np
+from copy import deepcopy
 
 import torch
 
@@ -19,26 +21,156 @@ from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 
 
+
+extracted_grads = []
+def extract_grad_hook(module, grad_in, grad_out):
+    extracted_grads.append(grad_out[0])
+
+# returns the wordpiece embedding weight matrix
+def get_embedding_weight(model):
+    for module in model.modules():
+        if isinstance(module, torch.nn.Embedding):            
+            if module.weight.shape[0] == 8848: # only add a hook to wordpiece embeddings, not position embeddings
+                return module.weight.detach()
+
+# add hooks for embeddings
+def add_hooks(model):
+    hook_registered = False
+    for module in model.modules():
+        if isinstance(module, torch.nn.Embedding):            
+            if module.weight.shape[0] == 8848: # only add a hook to wordpiece embeddings, not position
+                module.weight.requires_grad = True
+                module.register_backward_hook(extract_grad_hook)
+                hook_registered = True
+    if not hook_registered:
+        exit("Embedding matrix not found")
+
+
+def hotflip_attack(averaged_grad, embedding_matrix, trigger_token_ids,
+                   increase_loss=False, num_candidates=1):
+    """
+    The "Hotflip" attack described in Equation (2) of the paper. This code is heavily inspired by
+    the nice code of Paul Michel here https://github.com/pmichel31415/translate/blob/paul/
+    pytorch_translate/research/adversarial/adversaries/brute_force_adversary.py
+    This function takes in the model's average_grad over a batch of examples, the model's
+    token embedding matrix, and the current trigger token IDs. It returns the top token
+    candidates for each position.
+    If increase_loss=True, then the attack reverses the sign of the gradient and tries to increase
+    the loss (decrease the model's probability of the true class). For targeted attacks, you want
+    to decrease the loss of the target class (increase_loss=False).
+    """
+    averaged_grad = averaged_grad.cpu()
+    embedding_matrix = embedding_matrix.cpu()
+    trigger_token_embeds = torch.nn.functional.embedding(torch.LongTensor(trigger_token_ids),
+                                                         embedding_matrix).detach().unsqueeze(0)
+    averaged_grad = averaged_grad.unsqueeze(0)
+    gradient_dot_embedding_matrix = torch.einsum("bij,kj->bik",
+                                                 (averaged_grad, embedding_matrix))
+    gradient_dot_trigger_embeds = torch.einsum("bij,bij->bi",
+                                               (averaged_grad, trigger_token_embeds)).unsqueeze(-1)
+    final_taylor_approximation = gradient_dot_trigger_embeds - gradient_dot_embedding_matrix
+    if increase_loss:
+        final_taylor_approximation *= -1    # lower versus increase the class probability.
+    if num_candidates > 1: # get top k options
+        _, best_k_ids = torch.topk(final_taylor_approximation, num_candidates, dim=2)
+        return best_k_ids.detach().cpu().numpy()[0]
+    _, best_at_each_step = final_taylor_approximation.max(2)
+    return best_at_each_step[0].detach().cpu().numpy()
+
+
+# def main(args, init_distributed=False):
+#     utils.import_user_module(args)
+
+#     assert args.max_tokens is not None or args.max_sentences is not None, \
+#         'Must specify batch size either with --max-tokens or --max-sentences'
+
+#     # Initialize CUDA and distributed training
+#     if torch.cuda.is_available() and not args.cpu:
+#         torch.cuda.set_device(args.device_id)
+#     torch.manual_seed(args.seed)
+#     if init_distributed:
+#         args.distributed_rank = distributed_utils.distributed_init(args)
+
+#     if distributed_utils.is_master(args):
+#         checkpoint_utils.verify_checkpoint_directory(args.save_dir)
+
+#     # Print args
+#     print(args)
+
+#     # Setup task, e.g., translation, language modeling, etc.
+#     task = tasks.setup_task(args)
+
+#     # Load valid dataset (we load training data below, based on the latest checkpoint)
+#     for valid_sub_split in args.valid_subset.split(','):
+#         task.load_dataset(valid_sub_split, combine=False, epoch=0)
+
+#     # Build model and criterion
+#     model = task.build_model(args)
+#     criterion = task.build_criterion(args)
+
+#     print(model)
+#     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
+#     print('| num. model params: {} (num. trained: {})'.format(
+#         sum(p.numel() for p in model.parameters()),
+#         sum(p.numel() for p in model.parameters() if p.requires_grad),
+#     ))
+
+#     # Build trainer
+#     trainer = Trainer(args, task, model, criterion)
+#     print('| training on {} GPUs'.format(args.distributed_world_size))
+#     print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
+#         args.max_tokens,
+#         args.max_sentences,
+#     ))
+
+#     # Load the latest checkpoint if one is available and restore the
+#     # corresponding train iterator
+#     extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+
+#     # Train until the learning rate gets too small
+#     max_epoch = args.max_epoch or math.inf
+#     max_update = args.max_update or math.inf
+#     lr = trainer.get_lr()
+#     train_meter = StopwatchMeter()
+#     train_meter.start()
+#     valid_losses = [None]
+#     valid_subsets = args.valid_subset.split(',')
+#     while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
+#         # train for one epoch
+#         train(args, trainer, task, epoch_itr)
+
+#         if not args.disable_validation and epoch_itr.epoch % args.validate_interval == 0:
+#             valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+#         else:
+#             valid_losses = [None]
+
+#         # only use first validation loss to update the learning rate
+#         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+
+#         # save checkpoint
+#         if epoch_itr.epoch % args.save_interval == 0:
+#             checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+
+#         if ':' in getattr(args, 'data', ''):
+#             # sharded data: get train iterator for next epoch
+#             epoch_itr = trainer.get_train_iterator(epoch_itr.epoch)
+#     train_meter.stop()
+#     print('| done training in {:.1f} seconds'.format(train_meter.sum))
+
+
+
 def main(args, init_distributed=False):
     utils.import_user_module(args)
 
-    assert args.max_tokens is not None or args.max_sentences is not None, \
-        'Must specify batch size either with --max-tokens or --max-sentences'
+    # assert args.max_tokens is not None or args.max_sentences is not None, \
+    #     'Must specify batch size either with --max-tokens or --max-sentences'
 
     # Initialize CUDA and distributed training
     if torch.cuda.is_available() and not args.cpu:
         torch.cuda.set_device(args.device_id)
     torch.manual_seed(args.seed)
-    if init_distributed:
-        args.distributed_rank = distributed_utils.distributed_init(args)
-
-    if distributed_utils.is_master(args):
-        checkpoint_utils.verify_checkpoint_directory(args.save_dir)
-
-    # Print args
+    
     print(args)
-
-    # Setup task, e.g., translation, language modeling, etc.
     task = tasks.setup_task(args)
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
@@ -48,6 +180,7 @@ def main(args, init_distributed=False):
     # Build model and criterion
     model = task.build_model(args)
     criterion = task.build_criterion(args)
+
     print(model)
     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     print('| num. model params: {} (num. trained: {})'.format(
@@ -65,38 +198,73 @@ def main(args, init_distributed=False):
 
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
-    extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)
+    extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)    
 
-    # Train until the learning rate gets too small
-    max_epoch = args.max_epoch or math.inf
-    max_update = args.max_update or math.inf
-    lr = trainer.get_lr()
-    train_meter = StopwatchMeter()
-    train_meter.start()
-    valid_losses = [None]
+    # Evaluate without the trigger
     valid_subsets = args.valid_subset.split(',')
-    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
-        # train for one epoch
-        train(args, trainer, task, epoch_itr)
+    ####valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
 
-        if not args.disable_validation and epoch_itr.epoch % args.validate_interval == 0:
-            valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
-        else:
-            valid_losses = [None]
+    generate_and_validate_trigger(args, trainer, epoch_itr)    
+    
+        
+def generate_and_validate_trigger(args, trainer, epoch_itr):    
+    add_hooks(trainer.model) # add gradient hooks to embeddings    
+    embedding_weight = get_embedding_weight(trainer.model) # save the embedding matrix
 
-        # only use first validation loss to update the learning rate
-        lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+    # Initialize data iterator
+    # Update parameters every N batches
+    update_freq = args.update_freq[epoch_itr.epoch - 1] \
+        if epoch_itr.epoch <= len(args.update_freq) else args.update_freq[-1]
+    itr = epoch_itr.next_epoch_itr(
+        fix_batches_to_gpus=args.fix_batches_to_gpus,
+        shuffle=(epoch_itr.epoch >= args.curriculum),
+    )
+    itr = iterators.GroupedIterator(itr, update_freq)
+    
+    # initialize trigger
+    num_trigger_tokens = 5        
+    trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
+    best_loss = -1
+    for i, samples in enumerate(itr):
+        # trigger_validate(args, trainer, task, epoch_itr, trigger_token_ids)
 
-        # save checkpoint
-        if epoch_itr.epoch % args.save_interval == 0:
-            checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        # just try to overfit one batch
+        for i in range(1000):
+            # get gradient
+            src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
+            # sum gradient across the different scattered areas based on the src length
+            averaged_grad = None            
+            for indx, grad in enumerate(extracted_grads[0]):                                                
+                grad_for_trigger = grad[src_lengths[indx]: src_lengths[indx] + num_trigger_tokens]
+                if indx == 0:
+                    averaged_grad = grad_for_trigger
+                else:
+                    averaged_grad += grad_for_trigger                        
+            # get the top candidates using first-order approximation
+            candidate_trigger_tokens = hotflip_attack(averaged_grad,
+                                                      embedding_weight,
+                                                      trigger_token_ids,
+                                                      num_candidates=20)                    
+            curr_best_loss = -1
+            curr_best_trigger_tokens = None            
+            for index in range(len(candidate_trigger_tokens)):
+                for token_id in candidate_trigger_tokens[index]:
+                    # replace one token with new candidate
+                    temp_candidate_trigger_tokens = deepcopy(trigger_token_ids)
+                    temp_candidate_trigger_tokens[index] = token_id
 
-        if ':' in getattr(args, 'data', ''):
-            # sharded data: get train iterator for next epoch
-            epoch_itr = trainer.get_train_iterator(epoch_itr.epoch)
-    train_meter.stop()
-    print('| done training in {:.1f} seconds'.format(train_meter.sum))
+                    # get loss, update current best if its lower loss                                        
+                    curr_loss = trainer.get_trigger_loss(samples, temp_candidate_trigger_tokens).detach().cpu()
+                    if curr_loss > curr_best_loss:
+                        curr_best_loss = curr_loss
+                        curr_best_trigger_tokens = deepcopy(temp_candidate_trigger_tokens)
 
+            # Update overall best if the best current candidate is better
+            if curr_best_loss > best_loss:                
+                best_loss = curr_best_loss
+                trigger_token_ids = deepcopy(curr_best_trigger_tokens)
+                print("Loss: " + str(best_loss.data.item()))
+                print(trigger_token_ids)
 
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""
@@ -323,3 +491,4 @@ def cli_main():
 
 if __name__ == '__main__':
     cli_main()
+

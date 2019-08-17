@@ -19,6 +19,31 @@ from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 
 
+
+extracted_grads = []
+def extract_grad_hook(module, grad_in, grad_out):
+    extracted_grads.append(grad_out[0])
+
+# returns the wordpiece embedding weight matrix
+def get_embedding_weight(model):
+    for module in model.modules():
+        if isinstance(module, torch.nn.Embedding):            
+            if module.weight.shape[0] == 8848: # only add a hook to wordpiece embeddings, not position embeddings
+                return module.weight.detach()
+
+# add hooks for embeddings
+def add_hooks(model):
+    hook_registered = False
+    for module in model.modules():
+        if isinstance(module, torch.nn.Embedding):            
+            if module.weight.shape[0] == 8848: # only add a hook to wordpiece embeddings, not position
+                module.weight.requires_grad = True
+                module.register_backward_hook(extract_grad_hook)
+                hook_registered = True
+    if not hook_registered:
+        exit("Embedding matrix not found")
+
+
 def main(args, init_distributed=False):
     utils.import_user_module(args)
 
@@ -48,6 +73,10 @@ def main(args, init_distributed=False):
     # Build model and criterion
     model = task.build_model(args)
     criterion = task.build_criterion(args)
+
+    add_hooks(model) # add gradient hooks to embeddings    
+    embedding_weight = get_embedding_weight(model) # save the embedding matrix
+
     print(model)
     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     print('| num. model params: {} (num. trained: {})'.format(
@@ -119,6 +148,8 @@ def train(args, trainer, task, epoch_itr):
     max_update = args.max_update or math.inf
     for i, samples in enumerate(progress, start=epoch_itr.iterations_in_epoch):
         log_output = trainer.train_step(samples)
+        print(extracted_grads[0].shape)
+        exit()
         if log_output is None:
             continue
 

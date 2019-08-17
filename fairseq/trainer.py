@@ -218,6 +218,7 @@ class Trainer(object):
 
     def train_step(self, samples, dummy_batch=False, raise_oom=False):
         """Do forward, backward and parameter update."""
+        print("step")
         if self._dummy_batch is None:
             self._dummy_batch = samples[0]
 
@@ -231,6 +232,7 @@ class Trainer(object):
 
         # forward and backward pass
         logging_outputs, sample_sizes, ooms = [], [], 0
+        print(len(samples))
         for i, sample in enumerate(samples):
             sample = self._prepare_sample(sample)
             if sample is None:
@@ -259,6 +261,29 @@ class Trainer(object):
             try:
                 with maybe_no_sync():
                     # forward and backward
+                    #print(self.task) # translation
+                    #print(self.model) # prints transformer
+                    #print(sample['id'][0]) # ids of which training examples you have
+                    #print(sample['nsentences']) # number of sentences in batch
+                    #print(sample['ntokens']) # number of total tokens
+                    #print(sample['net_input'].keys())#.shape)
+                    #print(sample['net_input']['src_tokens'].shape) # the source tokens
+                    #print(sample['net_input']['src_lengths'].shape) # length of each source input (for padding)
+                    #print(sample['net_input']['prev_output_tokens'].shape) # the target but shifted over one
+                    #print(sample['target'].shape) # target
+                    trigger = torch.LongTensor([1]).unsqueeze(dim=0).repeat(sample['net_input']['src_tokens'].shape[0],1).to(sample['net_input']['src_tokens'].device)
+                    #print(sample['net_input']['src_tokens'][0])
+                    #print(sample['net_input']['src_tokens'][0].shape)
+                    #print(sample['net_input']['src_lengths'][0])
+                    #print(sample['net_input']['prev_output_tokens'][0])
+                    #print(sample['target'][0])
+                    sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger), dim=1)
+                    sample['net_input']['src_lengths'] += 1
+                    #print(sample['net_input']['src_tokens'][0])
+                    #print(sample['net_input']['src_tokens'][1])
+                    #print(sample['net_input']['src_lengths'][0])
+                    #print(self.task)
+                    #print(self.task.train_step)               
                     loss, sample_size, logging_output = self.task.train_step(
                         sample, self.model, self.criterion, self.optimizer,
                         ignore_grad
@@ -342,7 +367,7 @@ class Trainer(object):
             self._prev_grad_norm = grad_norm
 
             # take an optimization step
-            self.optimizer.step()
+            #self.optimizer.step()
             self.set_num_updates(self.get_num_updates() + 1)
 
             # task specific update per step

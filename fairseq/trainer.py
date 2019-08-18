@@ -431,7 +431,6 @@ class Trainer(object):
         # concenate trigger to input
         sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
         sample['net_input']['src_lengths'] += len(trigger)
-
         loss, _, __ = self.criterion(self.model, sample)
         
         # restore original inputs
@@ -577,4 +576,5 @@ class Trainer(object):
         torch.manual_seed(seed)
         if self.cuda:
             torch.cuda.manual_seed(seed)
+
 

@@ -25,7 +25,7 @@ class FirstTokenCrossEntropyCriterion(FairseqCriterion):
         3) logging outputs to display while training
         """
         net_output = model(**sample['net_input'])
-        loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce)
+        loss = self.compute_loss(model, net_output, sample, reduce=reduce)
         sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         logging_output = {
             'loss': utils.item(loss.data) if reduce else loss.data,
@@ -47,13 +47,12 @@ class FirstTokenCrossEntropyCriterion(FairseqCriterion):
         target = targets.view(-1)
         #print('target shape', target.shape)
         #print('target', target[0:70])
-        loss = F.nll_loss(
+        return F.nll_loss(
             lprobs,
             target,
             ignore_index=self.padding_idx,
-            reduction='sum' if reduce else 'none',
+            reduction='mean' if reduce else 'none',
         )
-        return loss, loss
 
     @staticmethod
     def aggregate_logging_outputs(logging_outputs):

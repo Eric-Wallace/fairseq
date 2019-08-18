@@ -78,6 +78,19 @@ def hotflip_attack(averaged_grad, embedding_matrix, trigger_token_ids,
     return best_at_each_step[0].detach().cpu().numpy()
 
 
+def random_attack(embedding_matrix, trigger_token_ids, num_candidates=1):
+    """
+    Randomly search over the vocabulary. Gets num_candidates random samples and returns all of them.
+    """
+    embedding_matrix = embedding_matrix.cpu()
+    new_trigger_token_ids = [[None]*num_candidates for _ in range(len(trigger_token_ids))]
+    for trigger_token_id in range(len(trigger_token_ids)):
+        for candidate_number in range(num_candidates):
+            # rand token in the embedding matrix
+            rand_token = np.random.randint(embedding_matrix.shape[0])
+            new_trigger_token_ids[trigger_token_id][candidate_number] = rand_token
+    return new_trigger_token_ids
+
 # def main(args, init_distributed=False):
 #     utils.import_user_module(args)
 
@@ -168,7 +181,7 @@ def main(args, init_distributed=False):
         torch.cuda.set_device(args.device_id)
     torch.manual_seed(args.seed)
     
-    print(args)
+    #print(args)
 
     task = tasks.setup_task(args)
 
@@ -179,21 +192,21 @@ def main(args, init_distributed=False):
     # Build model and criterion
     model = task.build_model(args)
     criterion = task.build_criterion(args)
-
-    print(model)
-    print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
-    print('| num. model params: {} (num. trained: {})'.format(
-        sum(p.numel() for p in model.parameters()),
-        sum(p.numel() for p in model.parameters() if p.requires_grad),
-    ))
+    print(criterion)
+    #print(model)
+    #print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
+    #print('| num. model params: {} (num. trained: {})'.format(
+    #    sum(p.numel() for p in model.parameters()),
+    #    sum(p.numel() for p in model.parameters() if p.requires_grad),
+    #))
 
     # Build trainer
     trainer = Trainer(args, task, model, criterion)
-    print('| training on {} GPUs'.format(args.distributed_world_size))
-    print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
-        args.max_tokens,
-        args.max_sentences,
-    ))
+    #print('| training on {} GPUs'.format(args.distributed_world_size))
+    #print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
+    #    args.max_tokens,
+    #    args.max_sentences,
+    #))
 
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
@@ -248,25 +261,35 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
     trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
     best_loss = -1
     for i, samples in enumerate(itr):
-        # trigger_validate(args, trainer, task, epoch_itr, trigger_token_ids)
+        trigger_validate(args, trainer, task, epoch_itr, trigger_token_ids)
 
+        print("new batch")
         # just try to overfit one batch
-        for i in range(1000):
+        for i in range(10):
             # get gradient
-            src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
+          #  src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
             # sum gradient across the different scattered areas based on the src length
-            averaged_grad = None            
-            for indx, grad in enumerate(extracted_grads[0]):                                                
-                grad_for_trigger = grad[src_lengths[indx]: src_lengths[indx] + num_trigger_tokens]
-                if indx == 0:
-                    averaged_grad = grad_for_trigger
-                else:
-                    averaged_grad += grad_for_trigger                        
+         #   averaged_grad = None            
+         #   for indx, grad in enumerate(extracted_grads[0]):                                               
+         #       try:
+         #           grad_for_trigger = grad[src_lengths[indx]: src_lengths[indx] + num_trigger_tokens] 
+         #       except:
+         #           print(indx)
+         #           print(grad.shape)
+         #           print(src_lengths.shape)
+         #           exit("oob")
+         #       if indx == 0:
+         #           averaged_grad = grad_for_trigger
+         #       else:
+         #           averaged_grad += grad_for_trigger                        
             # get the top candidates using first-order approximation
-            candidate_trigger_tokens = hotflip_attack(averaged_grad,
-                                                      embedding_weight,
-                                                      trigger_token_ids,
-                                                      num_candidates=20)                    
+            #candidate_trigger_tokens = hotflip_attack(averaged_grad,
+            #                                          embedding_weight,
+            #                                          trigger_token_ids,
+            #                                          num_candidates=10)  
+            candidate_trigger_tokens = random_attack(embedding_weight,
+                                                     trigger_token_ids,
+                                                     num_candidates=10)
             curr_best_loss = -1
             curr_best_trigger_tokens = None            
             for index in range(len(candidate_trigger_tokens)):
@@ -287,9 +310,7 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
                 trigger_token_ids = deepcopy(curr_best_trigger_tokens)
                 print("Loss: " + str(best_loss.data.item()))
                 print(trigger_token_ids)
-                print(encode_fn("Hello"))
-                print(trainer.task.target_dictionary.string(torch.LongTensor(trigger_token_ids), None))
-                print(decode_fn(trainer.task.target_dictionary.string(torch.LongTensor(trigger_token_ids), None)))
+                print(decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(trigger_token_ids), None)))
 
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""

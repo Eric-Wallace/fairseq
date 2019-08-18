@@ -264,8 +264,12 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
             x = tokenizer.decode(x)
         return x
 
+<<<<<<< HEAD
     itr = make_batches(args, trainer.task, encode_fn)
 
+=======
+    
+>>>>>>> 4be18a5037523a30a99a5d9c3fd77701ead8e268
     # initialize trigger
     num_trigger_tokens = 5        
     trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
@@ -539,4 +543,5 @@ def cli_main():
 
 if __name__ == '__main__':
     cli_main()
+
 

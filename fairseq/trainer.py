@@ -385,6 +385,7 @@ class Trainer(object):
         self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
         self.criterion.train()
         self.zero_grad()
+        print(len(samples))
         assert len(samples) == 1
 
         #for i, sample in enumerate(samples):
@@ -416,9 +417,12 @@ class Trainer(object):
         self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
         self.criterion.train()
         self.zero_grad()
-        assert len(samples) == 1
-
+        #final_loss = None
+        #print(samples)
+        #for sample in samples:
+        #    print(sample) 
         sample = self._prepare_sample(samples[0])
+        #     print(sample)
         batch_size = sample['net_input']['src_tokens'].shape[0]
         # create Trigger tensor
         trigger_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
@@ -427,17 +431,22 @@ class Trainer(object):
         # copy original inputs so we can restore them
         original_src = sample['net_input']['src_tokens'].clone()
         original_length = sample['net_input']['src_lengths'].clone()
-        
+    
         # concenate trigger to input
         sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
         sample['net_input']['src_lengths'] += len(trigger)
         loss, _, __ = self.criterion(self.model, sample)
+        #if final_loss is None:
+        #        final_loss = loss 
+        #    else:
+        #        final_loss += loss
         
         # restore original inputs
         sample['net_input']['src_tokens'] = original_src
         sample['net_input']['src_lengths'] = original_length
-
+   
         return loss
+        #return final_loss / len(samples)
 
     def valid_step(self, sample, raise_oom=False):
         """Do forward pass in evaluation mode."""

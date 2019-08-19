@@ -173,16 +173,11 @@ def random_attack(embedding_matrix, trigger_token_ids, num_candidates=1):
 def main(args, init_distributed=False):
     utils.import_user_module(args)
 
-    # assert args.max_tokens is not None or args.max_sentences is not None, \
-    #     'Must specify batch size either with --max-tokens or --max-sentences'
-
     # Initialize CUDA and distributed training
     if torch.cuda.is_available() and not args.cpu:
         torch.cuda.set_device(args.device_id)
     torch.manual_seed(args.seed)
     
-    #print(args)
-
     task = tasks.setup_task(args)
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
@@ -192,37 +187,44 @@ def main(args, init_distributed=False):
     # Build model and criterion
     model = task.build_model(args)
     criterion = task.build_criterion(args)
-    print(criterion)
-    #print(model)
-    #print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
-    #print('| num. model params: {} (num. trained: {})'.format(
-    #    sum(p.numel() for p in model.parameters()),
-    #    sum(p.numel() for p in model.parameters() if p.requires_grad),
-    #))
-
-    # Build trainer
+    print(criterion)    
+   
     trainer = Trainer(args, task, model, criterion)
-    #print('| training on {} GPUs'.format(args.distributed_world_size))
-    #print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
-    #    args.max_tokens,
-    #    args.max_sentences,
-    #))
-
+   
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
     extra_state, epoch_itr = checkpoint_utils.load_checkpoint(args, trainer)    
 
     # Evaluate without the trigger
-    valid_subsets = args.valid_subset.split(',')
-    ####valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+    #print("Validation loss without trigger")
+    #valid_subsets = args.valid_subset.split(',')
+    #print(validate(args, trainer, task, epoch_itr, valid_subsets))
 
     # Initialize generator
     generator = task.build_generator(args)
 
-    generate_and_validate_trigger(args, trainer, epoch_itr)    
+    generate_trigger(args, trainer, epoch_itr)    
     
-        
-def generate_and_validate_trigger(args, trainer, epoch_itr):    
+    
+# def make_batches(args, task, encode_fn):
+#     lines = ['How are you']
+#     tokens = [
+#         task.source_dictionary.encode_line(
+#             encode_fn(src_str), add_if_not_exist=False
+#         ).long()
+#         for src_str in lines
+#     ]
+#     lengths = torch.LongTensor([t.numel() for t in tokens])
+#     itr = task.get_batch_iterator(
+#         dataset=task.build_dataset_for_inference(tokens, lengths),
+#         max_tokens=4000,
+#         max_sentences=10,
+#         max_positions=512
+#     ).next_epoch_itr(shuffle=False)
+#     return itr
+
+
+def generate_trigger(args, trainer, epoch_itr):    
     add_hooks(trainer.model) # add gradient hooks to embeddings    
     embedding_weight = get_embedding_weight(trainer.model) # save the embedding matrix
 
@@ -255,16 +257,14 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
             x = tokenizer.decode(x)
         return x
 
-    
+    # itr = make_batches(args, trainer.task, encode_fn)
+
     # initialize trigger
     num_trigger_tokens = 5        
     trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
     best_loss = -1
-    for i, samples in enumerate(itr):
-        trigger_validate(args, trainer, task, epoch_itr, trigger_token_ids)
-
-        print("new batch")
-        # just try to overfit one batch
+    for i, samples in enumerate(itr):                    
+        # this many iters over a single batch
         for i in range(10):
             # get gradient
           #  src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
@@ -308,9 +308,40 @@ def generate_and_validate_trigger(args, trainer, epoch_itr):
             if curr_best_loss > best_loss:                
                 best_loss = curr_best_loss
                 trigger_token_ids = deepcopy(curr_best_trigger_tokens)
-                print("Loss: " + str(best_loss.data.item()))
-                print(trigger_token_ids)
+                print("Training Loss: " + str(best_loss.data.item()))
+                # print(trigger_token_ids)
                 print(decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(trigger_token_ids), None)))
+        validate_trigger(args, trainer, trainer.task, trigger_token_ids)
+
+def validate_trigger(args, trainer, task, trigger):    
+    subsets = args.valid_subset.split(',')
+    total_loss = None
+    total_samples = 0.0
+    for subset in subsets:       
+        itr = task.get_batch_iterator(
+            dataset=task.dataset(subset),
+            max_tokens=args.max_tokens_valid,
+            max_sentences=args.max_sentences_valid,
+            max_positions=utils.resolve_max_positions(
+                task.max_positions(),
+                trainer.get_model().max_positions(),
+            ),
+            ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
+            required_batch_size_multiple=args.required_batch_size_multiple,
+            seed=args.seed,
+            num_shards=args.distributed_world_size,
+            shard_id=args.distributed_rank,
+            num_workers=args.num_workers,
+        ).next_epoch_itr(shuffle=False)
+        for i, samples in enumerate(itr):
+            loss = trainer.get_trigger_loss([samples], trigger).detach().cpu()
+            if total_loss is not None:
+                total_loss += loss 
+            else:
+                total_loss = loss
+            total_samples += 1.0
+        
+    print("Validation Loss on 1st token: ", total_loss / total_samples)
 
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""
@@ -537,5 +568,6 @@ def cli_main():
 
 if __name__ == '__main__':
     cli_main()
+
 
 

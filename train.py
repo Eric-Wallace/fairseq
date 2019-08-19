@@ -205,25 +205,6 @@ def main(args, init_distributed=False):
 
     generate_trigger(args, trainer, epoch_itr)    
     
-    
-# def make_batches(args, task, encode_fn):
-#     lines = ['How are you']
-#     tokens = [
-#         task.source_dictionary.encode_line(
-#             encode_fn(src_str), add_if_not_exist=False
-#         ).long()
-#         for src_str in lines
-#     ]
-#     lengths = torch.LongTensor([t.numel() for t in tokens])
-#     itr = task.get_batch_iterator(
-#         dataset=task.build_dataset_for_inference(tokens, lengths),
-#         max_tokens=4000,
-#         max_sentences=10,
-#         max_positions=512
-#     ).next_epoch_itr(shuffle=False)
-#     return itr
-
-
 def generate_trigger(args, trainer, epoch_itr):    
     add_hooks(trainer.model) # add gradient hooks to embeddings    
     embedding_weight = get_embedding_weight(trainer.model) # save the embedding matrix
@@ -256,8 +237,6 @@ def generate_trigger(args, trainer, epoch_itr):
         if tokenizer is not None:
             x = tokenizer.decode(x)
         return x
-
-    # itr = make_batches(args, trainer.task, encode_fn)
 
     # initialize trigger
     num_trigger_tokens = 5        

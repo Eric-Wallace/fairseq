@@ -239,13 +239,13 @@ def generate_trigger(args, trainer, epoch_itr):
         return x
 
     # initialize trigger
-    num_trigger_tokens = 5        
+    num_trigger_tokens = 10 
     trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
     best_loss = -1
     attack_mode = 'random'
     for i, samples in enumerate(itr):                    
         # this many iters over a single batch
-        for i in range(10):
+        for i in range(100):
             if attack_mode == 'gradient':
                 # get gradient
                 src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
@@ -261,11 +261,11 @@ def generate_trigger(args, trainer, epoch_itr):
                 candidate_trigger_tokens = hotflip_attack(averaged_grad,
                                                           embedding_weight,
                                                           trigger_token_ids,
-                                                          num_candidates=10)  
+                                                          num_candidates=20)  
             elif attack_mode == 'random':
                 candidate_trigger_tokens = random_attack(embedding_weight,
                                                          trigger_token_ids,
-                                                         num_candidates=10)
+                                                         num_candidates=20)
             else:
                 exit("attack_mode")
             curr_best_loss = -1
@@ -318,7 +318,7 @@ def validate_trigger(args, trainer, task, trigger):
                 total_loss = loss
             total_samples += 1.0
         
-    print("Validation Loss on 1st token: ", total_loss / total_samples)
+    print("Validation Loss Using First Token Cross Entropy: ", total_loss / total_samples)
 
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""

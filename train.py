@@ -242,33 +242,32 @@ def generate_trigger(args, trainer, epoch_itr):
     num_trigger_tokens = 5        
     trigger_token_ids = np.random.randint(8848, size=num_trigger_tokens)    
     best_loss = -1
+    attack_mode = 'random'
     for i, samples in enumerate(itr):                    
         # this many iters over a single batch
         for i in range(10):
-            # get gradient
-          #  src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
-            # sum gradient across the different scattered areas based on the src length
-         #   averaged_grad = None            
-         #   for indx, grad in enumerate(extracted_grads[0]):                                               
-         #       try:
-         #           grad_for_trigger = grad[src_lengths[indx]: src_lengths[indx] + num_trigger_tokens] 
-         #       except:
-         #           print(indx)
-         #           print(grad.shape)
-         #           print(src_lengths.shape)
-         #           exit("oob")
-         #       if indx == 0:
-         #           averaged_grad = grad_for_trigger
-         #       else:
-         #           averaged_grad += grad_for_trigger                        
-            # get the top candidates using first-order approximation
-            #candidate_trigger_tokens = hotflip_attack(averaged_grad,
-            #                                          embedding_weight,
-            #                                          trigger_token_ids,
-            #                                          num_candidates=10)  
-            candidate_trigger_tokens = random_attack(embedding_weight,
-                                                     trigger_token_ids,
-                                                     num_candidates=10)
+            if attack_mode == 'gradient':
+                # get gradient
+                src_lengths = trainer.get_trigger_grad(samples, trigger_token_ids)            
+                # sum gradient across the different scattered areas based on the src length
+                averaged_grad = None            
+                for indx, grad in enumerate(extracted_grads[0]):
+                    grad_for_trigger = grad[src_lengths[indx]: src_lengths[indx] + num_trigger_tokens]                 
+                    if indx == 0:
+                        averaged_grad = grad_for_trigger
+                    else:
+                        averaged_grad += grad_for_trigger                        
+                # get the top candidates using first-order approximation
+                candidate_trigger_tokens = hotflip_attack(averaged_grad,
+                                                          embedding_weight,
+                                                          trigger_token_ids,
+                                                          num_candidates=10)  
+            elif attack_mode == 'random':
+                candidate_trigger_tokens = random_attack(embedding_weight,
+                                                         trigger_token_ids,
+                                                         num_candidates=10)
+            else:
+                exit("attack_mode")
             curr_best_loss = -1
             curr_best_trigger_tokens = None            
             for index in range(len(candidate_trigger_tokens)):
@@ -287,8 +286,7 @@ def generate_trigger(args, trainer, epoch_itr):
             if curr_best_loss > best_loss:                
                 best_loss = curr_best_loss
                 trigger_token_ids = deepcopy(curr_best_trigger_tokens)
-                print("Training Loss: " + str(best_loss.data.item()))
-                # print(trigger_token_ids)
+                print("Training Loss: " + str(best_loss.data.item()))                
                 print(decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(trigger_token_ids), None)))
         validate_trigger(args, trainer, trainer.task, trigger_token_ids)
 

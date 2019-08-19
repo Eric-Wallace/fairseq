@@ -37,16 +37,15 @@ class FirstTokenCrossEntropyCriterion(FairseqCriterion):
 
     def compute_loss(self, model, net_output, sample, reduce=True):        
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
-        #print('lprobs shape', lprobs.shape)
         lprobs = lprobs.view(-1, lprobs.size(-1))
         targets = model.get_targets(sample, net_output)
+        # only consider the cross entropy for the first tokens
+        num_target_tokens_in_loss = 3
         for target in targets:
-            for i, _ in enumerate(target):
-                if i != 0:
+            for i, _ in enumerate(target):                
+                if i > num_target_tokens_in_loss - 1:
                     target[i] = 1
-        target = targets.view(-1)
-        #print('target shape', target.shape)
-        #print('target', target[0:70])
+        target = targets.view(-1)        
         return F.nll_loss(
             lprobs,
             target,

@@ -385,13 +385,12 @@ class Trainer(object):
         self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
         self.criterion.train()
         self.zero_grad()
-        print(len(samples))
-        assert len(samples) == 1
+        assert len(samples) == 1 # gradient accumulation is off for this
+        samples = samples[0]
 
-        #for i, sample in enumerate(samples):
-        sample = self._prepare_sample(samples[0])
+        sample = self._prepare_sample(samples)
         batch_size = sample['net_input']['src_tokens'].shape[0]
-        # create Trigger tensor
+        # takes trigger (which is a list of BPE ids) and creates a tensor that repeats it batch size times
         trigger_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
         trigger_tensor = trigger_tensor.unsqueeze(dim=0).repeat(batch_size,1)
 
@@ -403,7 +402,6 @@ class Trainer(object):
         sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
         sample['net_input']['src_lengths'] += len(trigger)
 
-        # print("input size", sample['net_input']['src_tokens'].shape)
         # fills extracted_grads with the gradient w.r.t. the embedding
         self.task.train_step(sample, self.model, self.criterion, self.optimizer, False)
         
@@ -418,8 +416,9 @@ class Trainer(object):
         self.criterion.train()
         self.zero_grad()
         
-        assert len(samples) == 1
-        sample = self._prepare_sample(samples[0])    
+        assert len(samples) == 1 # accumulation is off
+        samples = samples[0]
+        sample = self._prepare_sample(samples)    
         
         batch_size = sample['net_input']['src_tokens'].shape[0]
         # create Trigger tensor

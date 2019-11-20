@@ -8,9 +8,6 @@ import torch
 from fairseq import tokenizer
 from fairseq.data import data_utils, FairseqDataset, iterators, Dictionary
 
-import sys
-sys.path.append('../..')
-import train
 
 class FairseqTask(object):
     """

@@ -29,7 +29,8 @@ def extract_grad_hook(module, grad_in, grad_out):
 # returns the wordpiece embedding weight matrix
 def get_embedding_weight(model):
     for module in model.modules():
-        if isinstance(module, torch.nn.Embedding):            
+        if isinstance(module, torch.nn.Embedding):
+            # TODO, this is hardcoded to be the size of the model's source embedding matrix
             if module.weight.shape[0] == 8848: # only add a hook to wordpiece embeddings, not position embeddings
                 return module.weight.detach()
 

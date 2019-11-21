@@ -394,32 +394,6 @@ class Trainer(object):
         
         return sample['net_input']['src_lengths'], prediction.max(2)[1].squeeze().detach().cpu()
     
-    # runs samples through the model and gets the prediction and loss
-    def get_input_loss_and_predictions(self, samples, new_input=None):
-        self._set_seed()
-        self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
-        self.criterion.train()
-        self.zero_grad()
-       
-        sample = self._prepare_sample(samples)    
-    
-        if new_input is not None:
-            # copy original inputs so we can restore them
-            original_src = sample['net_input']['src_tokens'].clone()
-    
-            # replace inputs with new inputs
-            new_input_tensor = torch.LongTensor(new_input).to(sample['net_input']['src_tokens'].device)
-            new_input_tensor = new_input_tensor.unsqueeze(dim=0)
-            sample['net_input']['src_tokens'] = new_input_tensor
-
-        loss, _, __, prediction = self.criterion(self.model, sample, return_prediction=True)
-        
-        if new_input is not None:
-            # restore original inputs
-            sample['net_input']['src_tokens'] = original_src
-   
-        return loss.detach().cpu(), prediction.max(2)[1].squeeze().detach().cpu() # 2 is the logit dimension, [1] is the indices of the max
-
     def valid_step(self, sample, raise_oom=False):
         """Do forward pass in evaluation mode."""
         with torch.no_grad():

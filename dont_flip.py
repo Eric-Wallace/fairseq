@@ -88,13 +88,18 @@ def main(args):
     #args.model_overrides='{}'
     models, _= checkpoint_utils.load_model_ensemble(args.path.split(':'), arg_overrides={}, task=task)
     model = models[0]
-    criterion = task.build_criterion(args)       
-    trainer = Trainer(args, task, model, criterion)   
-    print(args); print(task); print(model); print(criterion)
+    if torch.cuda.is_available() and not args.cpu:
+        model.cuda()
+    args.beam=1 # beam size 1 for now
+    model.make_generation_fast_(beamable_mm_beam_size=args.beam, need_attn=False)
 
-    flip_tokens(args, trainer, args.valid_subset.split(','))    
+    criterion = task.build_criterion(args)
+    trainer = Trainer(args, task, model, criterion)   
+    generator = task.build_generator(args)
+    print(args); print(task); print(model); print(criterion); print(generator)
+    flip_tokens(args, trainer, generator, args.valid_subset.split(','))    
     
-def flip_tokens(args, trainer, valid_subsets):    
+def flip_tokens(args, trainer, generator, valid_subsets):    
     bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0]
     add_hooks(trainer.model, bpe_vocab_size) # add gradient hooks to embeddings    
     embedding_weight = get_embedding_weight(trainer.model, bpe_vocab_size) # save the embedding matrix
@@ -131,19 +136,35 @@ def flip_tokens(args, trainer, valid_subsets):
 
     attack_mode = 'gradient' # gradient or random flipping
     for i, samples in enumerate(itr): # for the whole validation set
+        # get user input and build samples
+        user_input = input('Enter your sentence:\n')
+        tokenized_bpe_input = trainer.task.source_dictionary.encode_line(encode_fn(user_input)).long().unsqueeze(dim=0)
+        length_user_input = torch.LongTensor([len(tokenized_bpe_input[0])])
+        if torch.cuda.is_available() and not args.cpu:
+            tokenized_bpe_input = tokenized_bpe_input.cuda()
+            length_user_input = length_user_input.cuda()
+        print(samples)
+        samples = {'net_input': {'src_tokens': tokenized_bpe_input, 'src_lengths': length_user_input}}
+        # run model to get predictions
+        translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
+        samples['ntokens'] = len(tokenized_bpe_input[0]) 
+        samples['target'] = translations[0][0]['tokens'].unsqueeze(dim=0)
+        samples['net_input']['prev_output_tokens'] = torch.cat((samples['target'][0][-1:], samples['target'][0][:-1]), dim=0).unsqueeze(dim=0)
+        original_prediction = translations[0][0]['tokens'].cpu()
+
+        print(samples)
         input_token_ids = deepcopy(samples['net_input']['src_tokens'].cpu().numpy())
         input_token_ids = input_token_ids[0] # TODO, batch size 1 
-        if len(input_token_ids) < 20: # skip short examples for now
-           continue
         changed_positions = [False] * len(input_token_ids) # if a position is already changed, don't change it again
-        
-        # get original prediction
-        loss, original_prediction = trainer.get_input_loss_and_predictions(samples)
         for i in range(len(input_token_ids) * 3): # this many iters over a single batch. Gradient attack will early stop
             print('Input', decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(input_token_ids), None)))
             
-            src_lengths, predictions = trainer.get_input_grad(samples) # gradient is now filled
+            translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
+            samples['target'] = translations[0][0]['tokens'].unsqueeze(dim=0)
+            samples['net_input']['prev_output_tokens'] = torch.cat((samples['target'][0][-1:], samples['target'][0][:-1]), dim=0).unsqueeze(dim=0)
+            predictions = translations[0][0]['tokens'].cpu()
             print('Prediction', decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+            src_lengths, _ = trainer.get_input_grad(samples) # gradient is now filled
             if attack_mode == 'gradient':                 
                 input_gradient = extracted_grads[0][0][0:src_lengths[0]] # first [0] removes list from hook, then batch, then indexes into before the padding (though there shouldn't be any padding at the moment)
                 # get the top candidates using first-order approximation
@@ -168,15 +189,25 @@ def flip_tokens(args, trainer, valid_subsets):
                     temp_candidate_input_tokens[index] = token_id
 
                     # get loss, update current best if its lower loss                                        
-                    curr_loss, predictions = trainer.get_input_loss_and_predictions(samples, temp_candidate_input_tokens)
-                    if all(torch.eq(predictions,original_prediction)): # prediction is the same 
+                    # curr_loss, predictions = trainer.get_input_loss_and_predictions(samples, temp_candidate_input_tokens)
+                    
+                    original_src = samples['net_input']['src_tokens'].clone()
+                    new_input_tensor = torch.LongTensor(temp_candidate_input_tokens).to(samples['net_input']['src_tokens'].device)
+                    new_input_tensor = new_input_tensor.unsqueeze(dim=0)
+                    samples['net_input']['src_tokens'] = new_input_tensor
+
+                    predictions = trainer.task.inference_step(generator, [trainer.get_model()], samples)[0][0]['tokens'].cpu()
+                    samples['net_input']['src_tokens'] = original_src 
+                    if predictions.shape == original_prediction.shape and all(torch.eq(predictions,original_prediction)): # prediction is the same 
                         # if someone has already succesfully flipped a position, then only update if the new one is lower loss
-                        if curr_best_input_tokens_position_changed is not None and curr_loss > curr_best_loss:
+                        if curr_best_input_tokens_position_changed is not None:# and curr_loss > curr_best_loss:
                              continue
-                        curr_best_loss = curr_loss
+                        #curr_best_loss = curr_loss
                         curr_best_input_tokens = deepcopy(temp_candidate_input_tokens)
                         curr_best_input_tokens_position_changed = index 
+                        changed_positions[index] = True  # TODO, remove me when you have the loss > !!!!
           
+
             # Update current input if the new candidate flipped a position 
             if curr_best_input_tokens_position_changed is not None:
                 input_token_ids = deepcopy(curr_best_input_tokens)

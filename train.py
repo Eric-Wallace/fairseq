@@ -307,8 +307,8 @@ def validate_trigger(args, trainer, task, trigger):
             ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
             required_batch_size_multiple=args.required_batch_size_multiple,
             seed=args.seed,
-            num_shards=args.distributed_world_size,
-            shard_id=args.distributed_rank,
+            num_shards=args.num_shards,
+            shard_id=args.shard_id,
             num_workers=args.num_workers,
         ).next_epoch_itr(shuffle=False)
         for i, samples in enumerate(itr):
@@ -430,8 +430,8 @@ def validate(args, trainer, task, epoch_itr, subsets):
             ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
             required_batch_size_multiple=args.required_batch_size_multiple,
             seed=args.seed,
-            num_shards=args.distributed_world_size,
-            shard_id=args.distributed_rank,
+            num_shards=args.num_shards,
+            shard_id=args.shard_id,
             num_workers=args.num_workers,
         ).next_epoch_itr(shuffle=False)
         progress = progress_bar.build_progress_bar(

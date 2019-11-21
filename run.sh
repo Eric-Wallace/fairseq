@@ -1,0 +1,1 @@
+conda activate temp; export CUDA_VISIBLE_DEVICES=0; python dont_flip.py google/ --arch transformer_vaswani_wmt_en_de_big --restore-file checkpoint_best.pt --bpe sentencepiece --sentencepiece-vocab sentencepiece.google.bpe.model 

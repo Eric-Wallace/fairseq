@@ -379,72 +379,48 @@ class Trainer(object):
 
         return logging_output
 
-
+    # runs the samples through the model and fills extracted_grads with the gradient w.r.t. the embedding
     def get_input_grad(self, samples):
         self._set_seed()
         self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
         self.criterion.train()
         self.zero_grad()
-        # assert len(samples) == 1 # gradient accumulation is off for this
-        # samples = samples[0]
-
-        sample = self._prepare_sample(samples)
-        #batch_size = sample['net_input']['src_tokens'].shape[0]
-        ## takes trigger (which is a list of BPE ids) and creates a tensor that repeats it batch size times
-        #trigger_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
-        #trigger_tensor = trigger_tensor.unsqueeze(dim=0).repeat(batch_size,1)
-        #new_input_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
-        #new_input_tensor = new_input_tensor.unsqueeze(dim=0)
-
-        ## copy original inputs so we can restore them
-        #original_src = sample['net_input']['src_tokens'].clone()
-        #original_length = sample['net_input']['src_lengths'].clone()
-        
-        ## concenate trigger to input
-        #sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
-        #sample['net_input']['src_lengths'] += len(trigger)
         
         # fills extracted_grads with the gradient w.r.t. the embedding
-        _, __, ___, prediction = self.task.train_step(sample, self.model, self.criterion, self.optimizer, ignore_grad=False, return_prediction=True)
+        sample = self._prepare_sample(samples)
         
-        ## restore original inputs
-        #sample['net_input']['src_tokens'] = original_src
-        #sample['net_input']['src_lengths'] = original_length
-        return sample['net_input']['src_lengths'], prediction
+        loss, _, __, prediction = self.criterion(self.model, sample, return_prediction=True)
+        self.optimizer.backward(loss)
+        
+        return sample['net_input']['src_lengths'], prediction.max(2)[1].squeeze().detach().cpu()
     
-    def get_trigger_loss(self, samples, trigger):
+    # runs samples through the model and gets the prediction and loss
+    def get_input_loss_and_predictions(self, samples, new_input=None):
         self._set_seed()
         self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
         self.criterion.train()
         self.zero_grad()
        
-        # assert len(samples) == 1 # accumulation is off
-        # samples = samples[0]
         sample = self._prepare_sample(samples)    
-        
-        #batch_size = sample['net_input']['src_tokens'].shape[0]
-        ## create Trigger tensor
-        #trigger_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
-        #trigger_tensor = trigger_tensor.unsqueeze(dim=0).repeat(batch_size,1)
-        new_input_tensor = torch.LongTensor(trigger).to(sample['net_input']['src_tokens'].device)
-        new_input_tensor = new_input_tensor.unsqueeze(dim=0)
+    
+        if new_input is not None:
+            # copy original inputs so we can restore them
+            original_src = sample['net_input']['src_tokens'].clone()
+            original_length = sample['net_input']['src_lengths'].clone()
+    
+            # replace inputs with new inputs
+            new_input_tensor = torch.LongTensor(new_input).to(sample['net_input']['src_tokens'].device)
+            new_input_tensor = new_input_tensor.unsqueeze(dim=0)
+            sample['net_input']['src_tokens'] = new_input_tensor
 
-        # copy original inputs so we can restore them
-        original_src = sample['net_input']['src_tokens'].clone()
-        original_length = sample['net_input']['src_lengths'].clone()
-        
-        sample['net_input']['src_tokens'] = new_input_tensor
-
-        # concenate trigger to input
-        #sample['net_input']['src_tokens'] = torch.cat((sample['net_input']['src_tokens'], trigger_tensor), dim=1)
-        #sample['net_input']['src_lengths'] += len(trigger)
         loss, _, __, prediction = self.criterion(self.model, sample, return_prediction=True)
         
-        # restore original inputs
-        sample['net_input']['src_tokens'] = original_src
-        sample['net_input']['src_lengths'] = original_length
+        if new_input is not None:
+            # restore original inputs
+            sample['net_input']['src_tokens'] = original_src
+            sample['net_input']['src_lengths'] = original_length
    
-        return loss, prediction
+        return loss.detach().cpu(), prediction.max(2)[1].squeeze().detach().cpu() # 2 is the logit dimension, [1] is the indices of the max
 
     def valid_step(self, sample, raise_oom=False):
         """Do forward pass in evaluation mode."""

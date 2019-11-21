@@ -77,15 +77,14 @@ class Trainer(object):
 
     @property
     def model(self):
-        #if self._wrapped_model is None:
-        #    if self.args.distributed_world_size > 1 and not self.args.use_bmuf:
-        #        self._wrapped_model = models.DistributedFairseqModel(
-        #            self.args, self._model,
-        #        )
-        #    else:
-        #        self._wrapped_model = self._model
-        #return self._wrapped_model
-        return self._model
+        if self._wrapped_model is None:
+            if self.args.distributed_world_size > 1 and not self.args.use_bmuf:
+                self._wrapped_model = models.DistributedFairseqModel(
+                    self.args, self._model,
+                )
+            else:
+                self._wrapped_model = self._model
+        return self._wrapped_model
 
     @property
     def optimizer(self):
@@ -381,7 +380,7 @@ class Trainer(object):
         return logging_output
 
 
-    def get_trigger_grad(self, samples, trigger):
+    def get_input_grad(self, samples):
         self._set_seed()
         self.model.eval() # we want grads from eval() model, to turn off dropout and stuff
         self.criterion.train()

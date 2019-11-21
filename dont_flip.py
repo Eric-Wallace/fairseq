@@ -67,9 +67,8 @@ def random_attack(embedding_matrix, trigger_token_ids, num_candidates=1):
 
 def main(args):    
     utils.import_user_module(args)
-    # args.max_positions = TODO
-    # args.criterion=''
-    args.share_all_embeddings = True # TODO, make this model-dependent    
+    
+    #args.share_all_embeddings = True # TODO, make this model-dependent    
     args.max_tokens_valid = 256 # TODO, for now we do batch size with small sentences
     args.max_positions = 256
     args.skip_invalid_size_inputs_valid_test = True
@@ -122,22 +121,21 @@ def generate_trigger(args, trainer, valid_subsets):
                                   num_workers=args.num_workers,).next_epoch_itr(shuffle=False)
     
     # Handle tokenization and BPE
-    #tokenizer = encoders.build_tokenizer(args)
-    #bpe = encoders.build_bpe(args)
+    tokenizer = encoders.build_tokenizer(args)
+    bpe = encoders.build_bpe(args)
+    def encode_fn(x):
+        if tokenizer is not None:
+            x = tokenizer.encode(x)
+        if bpe is not None:
+            x = bpe.encode(x)
+        return x
 
-    #def encode_fn(x):
-    #    if tokenizer is not None:
-    #        x = tokenizer.encode(x)
-    #    if bpe is not None:
-    #        x = bpe.encode(x)
-    #    return x
-
-    #def decode_fn(x):
-    #    if bpe is not None:
-    #        x = bpe.decode(x)
-    #    if tokenizer is not None:
-    #        x = tokenizer.decode(x)
-    #    return x
+    def decode_fn(x):
+        if bpe is not None:
+            x = bpe.decode(x)
+        if tokenizer is not None:
+            x = tokenizer.decode(x)
+        return x
 
     # initialize trigger
     #num_trigger_tokens = 10
@@ -148,7 +146,7 @@ def generate_trigger(args, trainer, valid_subsets):
         # original ids are the original sample ids
         input_token_ids = samples['net_input']['src_tokens'].cpu().numpy()
         input_token_ids = input_token_ids[0] # batch size 1 
-        if len(input_token_ids) <15:
+        if len(input_token_ids) < 20:
            continue
         changed_positions = [False] * len(input_token_ids) 
         
@@ -157,16 +155,21 @@ def generate_trigger(args, trainer, valid_subsets):
         del _src_lengths 
         predictions = predictions.detach().cpu()
         original_prediction = predictions.max(2)[1].squeeze()
-        print('\n\n')
-        print(original_prediction)
-
-        for i in range(100): # this many iters over a single batch
-            print('input ids', input_token_ids)
-            print('positions', changed_positions)
+        #print('\n\n')
+        #print(original_prediction)
+        do_increase_loss = False
+        attack_mode='gradient'
+        for i in range(len(input_token_ids)*3): # this many iters over a single batch
+            #print('input ids', input_token_ids)
+            print('Input', decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(input_token_ids), None)))
+            #print('positions', changed_positions)
+            
+            src_lengths, predictions = trainer.get_trigger_grad(samples, None)#input_token_ids) # get gradient
+            predictions = predictions.max(2)[1].squeeze().cpu().numpy()
+            #print('predictions', predictions)
+            print('Prediction', decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+            del predictions
             if attack_mode == 'gradient':                 
-                src_lengths, predictions = trainer.get_trigger_grad(samples, None)#input_token_ids) # get gradient
-                print('predictions', predictions.max(2)[1].squeeze())
-                del predictions
                 # sum gradient across the different scattered areas based on the src length
                 averaged_grad = None            
                 assert len(extracted_grads[0]) == 1 # batch size 1 fornow
@@ -181,8 +184,8 @@ def generate_trigger(args, trainer, valid_subsets):
                 candidate_trigger_tokens = hotflip_attack(averaged_grad,
                                                           embedding_weight,
                                                           input_token_ids,
-                                                          num_candidates=10,
-                                                          increase_loss=True)
+                                                          num_candidates=30,
+                                                          increase_loss=do_increase_loss)
             elif attack_mode == 'random':
                 candidate_trigger_tokens = random_attack(embedding_weight,
                                                          input_token_ids,
@@ -216,13 +219,25 @@ def generate_trigger(args, trainer, valid_subsets):
                 #best_loss = curr_best_loss
                 input_token_ids = deepcopy(curr_best_trigger_tokens)
                 changed_positions[curr_best_trigger_tokens_position_changed] = True
+                print('new flip')
                 #print('new best loss', best_loss)
                 #print("Training Loss: " + str(best_loss.data.item()))                
                 #print(decode_fn(trainer.task.source_dictionary.string(torch.LongTensor(trigger_token_ids), None)))
             else:
-                if attack_mode == 'gradient':
-                    print('breaking\n')
-                    break # gradient is deterministic, so if it didnt flip another then its never going to
+                #print('switching to random')
+                print('\n')
+                break
+                #attack_mode = 'random'
+                #if attack_mode == 'gradient':
+                    #if not do_increase_loss:
+                    #    do_increase_loss = True
+                    #else:
+                        #attack_mode = 'random'
+                #else:
+                #    print('breaking\n')
+                #    attack_mode = 'gradient'
+                #    break # gradient is deterministic, so if it didnt flip another then its never going to
+                
         #validate_trigger(args, trainer, trainer.task, trigger_token_ids)
 
 def validate_trigger(args, trainer, task, trigger):    

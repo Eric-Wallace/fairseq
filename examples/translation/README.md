@@ -99,11 +99,6 @@ fairseq-generate data-bin/iwslt14.tokenized.de-en \
     --batch-size 128 --beam 5 --remove-bpe
 ```
 
-Attacking that model:
-```CUDA_VISIBLE_DEVICES=0 fairseq-train data-bin/iwslt14.tokenized.de-en --arch transformer_iwslt_de_en --share-decoder-input-output-embed --criterion first_token_cross_entropy --max-tokens 250 --restore-file checkpoints/checkpoint_best.pt --reset-optimizer
-
-```
-
 ### WMT'14 English to German (Convolutional)
 
 The following instructions can be used to train a Convolutional translation model on the WMT English to German dataset.

@@ -128,8 +128,9 @@ def flip_tokens(args, trainer, generator):
         if torch.cuda.is_available() and not args.cpu:
             samples['net_input']['src_tokens'] = samples['net_input']['src_tokens'].cuda()
             samples['net_input']['src_lengths'] = samples['net_input']['src_lengths'].cuda()
-            samples['target'] = samples['target'].cuda()
-            samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()      
+            if 'target' in samples:
+                samples['target'] = samples['target'].cuda()
+                samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()      
         translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
         samples['target'] = translations[0][0]['tokens'].unsqueeze(dim=0)
         # prev_output_tokens is the right rotated version of the target

@@ -49,7 +49,7 @@ def hotflip_attack(averaged_grad, embedding_matrix, token_ids,
 # random search, returns num_candidates random samples.
 def random_attack(embedding_matrix, token_ids, num_candidates=1):
     embedding_matrix = embedding_matrix.cpu()
-    new_token_ids = [[None]*num_candidates for _ in range(token_ids)]
+    new_token_ids = [[None]*num_candidates for _ in range(len(token_ids))]
     for token_id in range(len(token_ids)):
         for candidate_number in range(num_candidates):
             # rand token in the embedding matrix
@@ -130,7 +130,7 @@ def flip_tokens(args, trainer, generator):
             samples['net_input']['src_lengths'] = samples['net_input']['src_lengths'].cuda()
             if 'target' in samples:
                 samples['target'] = samples['target'].cuda()
-                samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()      
+                samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()
         translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
         samples['target'] = translations[0][0]['tokens'].unsqueeze(dim=0)
         # prev_output_tokens is the right rotated version of the target
@@ -138,70 +138,105 @@ def flip_tokens(args, trainer, generator):
         predictions = translations[0][0]['tokens'].cpu()
         return samples, predictions
 
-    attack_mode = 'gradient' # gradient or random flipping
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
-        if args.interactive_attacks: # get user input and build samples            
+        attack_mode = 'decoder_gradient' # gradient or random flipping
+        new_found_input_tokens = 'temp' # for the first very iteration, we want to print so we set this to something that isn't None
+        if args.interactive_attacks: # get user input and build samples
             user_input = input('Enter your sentence:\n')
             # tokenize input and get lengths
             tokenized_bpe_input = trainer.task.source_dictionary.encode_line(bpe.encode(user_input)).long().unsqueeze(dim=0)
-            length_user_input = torch.LongTensor([len(tokenized_bpe_input[0])])            
+            length_user_input = torch.LongTensor([len(tokenized_bpe_input[0])])
             # build samples and set their targets with the model predictions
             samples = {'net_input': {'src_tokens': tokenized_bpe_input, 'src_lengths': length_user_input}, 'ntokens': len(tokenized_bpe_input[0])}
-        
+
         changed_positions = [False] * samples['ntokens'] # if a position is already changed, don't change it again. ntokens = size for batch size 1
-        samples, original_prediction = run_inference_and_overwrite_samples(samples)        
+        samples, original_prediction = run_inference_and_overwrite_samples(samples)
+        # if args.random_start:        
+        #     samples['net_input']['src_tokens'] = torch.randint(2, bpe_vocab_size, samples['net_input']['src_tokens'].shape).cuda() # TODO, I think start a 2? I want to avoid <bos> and stuff            
         for i in range(samples['ntokens'] * 3): # this many iters over a single batch. Gradient attack will early stop
-            print('Current Model Input: ', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+            if new_found_input_tokens is not None: # only print when a new best has been found
+                print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
             samples, predictions = run_inference_and_overwrite_samples(samples)
-            print('Current Model Predict:', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+            #print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+            global extracted_grads
+            extracted_grads = [] # clear old extracted_grads
             src_lengths, _ = get_input_grad(trainer, samples) # gradient is now filled
-            if attack_mode == 'gradient':
-                input_gradient = extracted_grads[0][0][0:src_lengths[0]] # first [0] removes list from hook, then batch, then indexes into before the padding (though there shouldn't be any padding at the moment)
+            if 'gradient' in attack_mode:
+                # position [1] in extracted_grads is the encoder embedding grads, [0] is decoder
+                if attack_mode == 'gradient':
+                    gradient_position = 1
+                elif attack_mode == 'decoder_gradient':
+                    gradient_position = 0
+                input_gradient = extracted_grads[gradient_position][0][0:src_lengths[0]] # first [] gets decoder/encoder grads, then batch (currently size 1), then we index into before the padding (though there shouldn't be any padding at the moment because batch size 1)
                 candidate_input_tokens = hotflip_attack(input_gradient,
                                                           embedding_weight,
                                                           samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                          num_candidates=30,
+                                                          num_candidates=200,
                                                           increase_loss=False)
             elif attack_mode == 'random':
                 candidate_input_tokens = random_attack(embedding_weight,
                                                          samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                         num_candidates=20)
-            #curr_best_loss = -999999999
+                                                         num_candidates=200)
+
             new_found_input_tokens = None
-            #curr_best_input_tokens_position_changed = None
+            batch_size = 64
+            # take samples (of batch size 1) and repeat it batch_size times
+            samples_repeated_by_batch = deepcopy(samples)
+            samples_repeated_by_batch['ntokens'] *= batch_size
+            samples_repeated_by_batch['target'] = samples_repeated_by_batch['target'].repeat(batch_size, 1)
+            samples_repeated_by_batch['net_input']['prev_output_tokens'] = samples_repeated_by_batch['net_input']['prev_output_tokens'].repeat(batch_size, 1)
+            samples_repeated_by_batch['net_input']['src_tokens'] = samples_repeated_by_batch['net_input']['src_tokens'].repeat(batch_size, 1)
+            samples_repeated_by_batch['net_input']['src_lengths'] = samples_repeated_by_batch['net_input']['src_lengths'].repeat(batch_size, 1)
+
+            all_inference_samples = [] # stores a list of batches of candidates
+            current_batch_size = 0
+            all_changed_positions = [] # stores all the changed_positions for each batch element
+            current_batch_changed_position = []
+            current_inference_samples = deepcopy(samples_repeated_by_batch) # stores one batch worth of candidates
             for index in range(len(candidate_input_tokens)): # for all the positions in the input
                 for token_id in candidate_input_tokens[index]: # for all the candidates
-                    if changed_positions[index] or new_found_input_tokens is not None: # if we have already changed this position, skip
+                    if changed_positions[index]: # if we have already changed this position, skip
                         continue
 
-                    # replace one token with new candidate
-                    original_src = deepcopy(samples['net_input']['src_tokens'])                    
-                    samples['net_input']['src_tokens'][0][index] = torch.LongTensor([token_id]).cuda().squeeze(0)
+                    current_inference_samples['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).cuda().squeeze(0) # change on token
+                    current_batch_size += 1
+                    current_batch_changed_position.append(index) # save its changed position
 
-                    predictions = trainer.task.inference_step(generator, [trainer.get_model()], samples)[0][0]['tokens'].cpu()                    
+                    if current_batch_size == batch_size: # batch is full
+                        all_inference_samples.append(deepcopy(current_inference_samples))
+                        current_inference_samples = deepcopy(samples_repeated_by_batch)
+                        current_batch_size = 0
+                        all_changed_positions.append(current_batch_changed_position)
+                        current_batch_changed_position = []
+
+            for inference_indx, inference_sample in enumerate(all_inference_samples):
+                predictions = trainer.task.inference_step(generator, [trainer.get_model()],
+                    inference_sample) # batched inference
+                for prediction_indx, prediction in enumerate(predictions): # for all predictions
+                    prediction = prediction[0]['tokens'].cpu()
                     # if prediction is the same, then save input
-                    if predictions.shape == original_prediction.shape and all(torch.eq(predictions,original_prediction)):
-                        # if someone has already succesfully flipped a position, then only update if the new one is lower loss
-                        #if curr_best_input_tokens_position_changed is not None:# and curr_loss > curr_best_loss:
-                             #continue
-                        #curr_best_loss = curr_loss
-                        new_found_input_tokens = deepcopy(samples['net_input']['src_tokens'])
-                        changed_positions[index] = True                        
-                        #curr_best_input_tokens_position_changed = index                        
-                    # restore input
-                    samples['net_input']['src_tokens'] = original_src
+                    if prediction.shape == original_prediction.shape and all(torch.eq(prediction,original_prediction)):
+                        new_found_input_tokens = deepcopy(inference_sample['net_input']['src_tokens'][prediction_indx].unsqueeze(0))
+                        changed_positions[all_changed_positions[inference_indx][prediction_indx]] = True
+                        break # break twice
+                if new_found_input_tokens is not None:
+                    break
 
             # Update current input if the new candidate flipped a position
-            #if curr_best_input_tokens_position_changed is not None:
-                #input_token_ids = deepcopy(curr_best_input_tokens)
-                #changed_positions[curr_best_input_tokens_position_changed] = True
-            if new_found_input_tokens is not None:                
-                samples['net_input']['src_tokens'] = new_found_input_tokens                
+            if new_found_input_tokens is not None:
+                if attack_mode == 'random':
+                    attack_mode = 'gradient'
+                    #print('random worked, switching back to gradient')
+                samples['net_input']['src_tokens'] = new_found_input_tokens
 
             # gradient is deterministic, so if it didnt flip another then its never going to
-            elif attack_mode == 'gradient':
-                print('no more succesful flips\n')
-                break
+            else:
+                if attack_mode == 'gradient': # once gradient fails, start using the decoder gradient
+                    attack_mode = 'decoder_gradient'
+                    #print('no more succesful flips, switching from gradient to decoder_gradient')
+                elif attack_mode == 'decoder_gradient':
+                    attack_mode = 'random'
+                    #print('no more succesful flips, switching from decoder_gradient to random')
 
 parser = options.get_training_parser()
 args = options.parse_args_and_arch(parser)
@@ -212,3 +247,4 @@ args.reset_dataloader = True
 args.reset_lr_scheduler = True
 args.path = args.restore_file
 main(args)
+

@@ -134,10 +134,14 @@ def flip_tokens(args, trainer, generator):
         translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
         samples['target'] = translations[0][0]['tokens'].unsqueeze(dim=0)
         # prev_output_tokens is the right rotated version of the target
-        samples['net_input']['prev_output_tokens'] = torch.cat((samples['target'][0][-1:], samples['target'][0][:-1]), dim=0).unsqueeze(dim=0)
+        samples['net_input']['prev_output_tokens'] = torch.cat((samples['target'][0][-1:], samples['target'][0][:-1]), dim=0).unsqueeze(dim=0)        
         predictions = translations[0][0]['tokens'].cpu()
         return samples, predictions
 
+    num_samples_changed = 0.0
+    num_total_samples = 0.0
+    num_tokens_changed = 0.0
+    total_num_tokens = 0.0
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
         attack_mode = 'decoder_gradient' # gradient or random flipping
         new_found_input_tokens = 'temp' # for the first very iteration, we want to print so we set this to something that isn't None
@@ -148,14 +152,16 @@ def flip_tokens(args, trainer, generator):
             length_user_input = torch.LongTensor([len(tokenized_bpe_input[0])])
             # build samples and set their targets with the model predictions
             samples = {'net_input': {'src_tokens': tokenized_bpe_input, 'src_lengths': length_user_input}, 'ntokens': len(tokenized_bpe_input[0])}
-
-        changed_positions = [False] * samples['ntokens'] # if a position is already changed, don't change it again. ntokens = size for batch size 1
-        samples, original_prediction = run_inference_and_overwrite_samples(samples)
+                
+        samples, original_prediction = run_inference_and_overwrite_samples(samples)        
+        changed_positions = [False] * (samples['net_input']['src_tokens'].shape[1] - 1) # if a position is already changed, don't change it again. [False] for the sequence length, but minus -1 to ignore pad
         # if args.random_start:        
         #     samples['net_input']['src_tokens'] = torch.randint(2, bpe_vocab_size, samples['net_input']['src_tokens'].shape).cuda() # TODO, I think start a 2? I want to avoid <bos> and stuff            
         for i in range(samples['ntokens'] * 3): # this many iters over a single batch. Gradient attack will early stop
             if new_found_input_tokens is not None: # only print when a new best has been found
                 print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+            assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad it always there
+
             samples, predictions = run_inference_and_overwrite_samples(samples)
             #print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
             global extracted_grads
@@ -167,7 +173,7 @@ def flip_tokens(args, trainer, generator):
                     gradient_position = 1
                 elif attack_mode == 'decoder_gradient':
                     gradient_position = 0
-                input_gradient = extracted_grads[gradient_position][0][0:src_lengths[0]] # first [] gets decoder/encoder grads, then batch (currently size 1), then we index into before the padding (though there shouldn't be any padding at the moment because batch size 1)
+                input_gradient = extracted_grads[gradient_position][0][0:src_lengths[0]-1] # first [] gets decoder/encoder grads, then batch (currently size 1), then we index into before the padding (though there shouldn't be any padding at the moment because batch size 1). The -1 is to ignore the padding
                 candidate_input_tokens = hotflip_attack(input_gradient,
                                                           embedding_weight,
                                                           samples['net_input']['src_tokens'].cpu().numpy()[0],
@@ -194,11 +200,11 @@ def flip_tokens(args, trainer, generator):
             current_batch_changed_position = []
             current_inference_samples = deepcopy(samples_repeated_by_batch) # stores one batch worth of candidates
             for index in range(len(candidate_input_tokens)): # for all the positions in the input
-                for token_id in candidate_input_tokens[index]: # for all the candidates
+                for token_id in candidate_input_tokens[index]: # for all the candidates                    
                     if changed_positions[index]: # if we have already changed this position, skip
                         continue
 
-                    current_inference_samples['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).cuda().squeeze(0) # change on token
+                    current_inference_samples['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).cuda().squeeze(0) # change on token                    
                     current_batch_size += 1
                     current_batch_changed_position.append(index) # save its changed position
 
@@ -216,6 +222,9 @@ def flip_tokens(args, trainer, generator):
                     prediction = prediction[0]['tokens'].cpu()
                     # if prediction is the same, then save input
                     if prediction.shape == original_prediction.shape and all(torch.eq(prediction,original_prediction)):
+                        if all(torch.eq(inference_sample['net_input']['src_tokens'][prediction_indx],samples['net_input']['src_tokens'].squeeze(0))): # if the "new" candidate is actually the same as the current tokens
+                            print('lol it was the same')
+                            continue
                         new_found_input_tokens = deepcopy(inference_sample['net_input']['src_tokens'][prediction_indx].unsqueeze(0))
                         changed_positions[all_changed_positions[inference_indx][prediction_indx]] = True
                         break # break twice
@@ -236,7 +245,18 @@ def flip_tokens(args, trainer, generator):
                     #print('no more succesful flips, switching from gradient to decoder_gradient')
                 elif attack_mode == 'decoder_gradient':
                     attack_mode = 'random'
+                    break
                     #print('no more succesful flips, switching from decoder_gradient to random')
+        num_total_samples += 1.0
+        print(changed_positions)
+        if any(changed_positions):
+            num_samples_changed += 1.0
+            num_tokens_changed += sum(changed_positions)
+            total_num_tokens += len(changed_positions)
+        print('\n')
+    print('Total Num Samples', num_total_samples)
+    print('Percent Samples Changed', num_samples_changed / num_total_samples)
+    print('Percent Tokens Changed', num_tokens_changed / total_num_tokens)
 
 parser = options.get_training_parser()
 args = options.parse_args_and_arch(parser)

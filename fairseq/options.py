@@ -165,6 +165,7 @@ def get_parser(desc, default_task='translation'):
 
     parser = argparse.ArgumentParser(allow_abbrev=False)
     # fmt: off
+    parser.add_argument('--targeted_flips', action='store_true')
     parser.add_argument('--random_start', action='store_true')
     parser.add_argument('--interactive_attacks', action='store_true')
     parser.add_argument('--no-progress-bar', action='store_true', help='disable progress bar')

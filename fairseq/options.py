@@ -167,6 +167,7 @@ def get_parser(desc, default_task='translation'):
     # fmt: off
     parser.add_argument('--targeted_flips', action='store_true')
     parser.add_argument('--random_start', action='store_true')
+    parser.add_argument('--no-check-resegmentation', action='store_true', default=False)
     parser.add_argument('--interactive_attacks', action='store_true')
     parser.add_argument('--no-progress-bar', action='store_true', help='disable progress bar')
     parser.add_argument('--log-interval', type=int, default=1000, metavar='N',

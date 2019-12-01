@@ -4,6 +4,8 @@ import torch
 from fairseq import checkpoint_utils, options, tasks, utils
 from fairseq.data import iterators, encoders
 from fairseq.trainer import Trainer
+#import nltk 
+#from nltk.corpus import wordnet 
 
 extracted_grads = []
 def extract_grad_hook(module, grad_in, grad_out):
@@ -146,7 +148,9 @@ def malicious_nonsense(args, trainer, generator):
     num_tokens_changed = 0.0
     total_num_tokens = 0.0
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
-        attack_mode = 'decoder_gradient' # gradient or random flipping
+        if i < 500 or i > 600:
+            continue
+        attack_mode = 'gradient' # gradient or random flipping
         new_found_input_tokens = 'temp' # for the first very iteration, we want to print so we set this to something that isn't None
         if args.interactive_attacks: # get user input and build samples
             user_input = input('Enter your sentence:\n')
@@ -161,9 +165,21 @@ def malicious_nonsense(args, trainer, generator):
         # if args.random_start:        
         #     samples['net_input']['src_tokens'] = torch.randint(2, bpe_vocab_size, samples['net_input']['src_tokens'].shape).cuda() # TODO, I think start a 2? I want to avoid <bos> and stuff            
         for i in range(samples['ntokens'] * 3): # this many iters over a single batch. Gradient attack will early stop
-            if new_found_input_tokens is not None: # only print when a new best has been found
-                print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+            #if new_found_input_tokens is not None: # only print when a new best has been found
+            #    print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
             assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad it always there
+
+            #string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None))
+            #print('current source BPE id', samples['net_input']['src_tokens'])
+            #print('current source string', string_input_tokens)
+            #retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0).cuda()
+            #print('retokenized BPE ID   ', retokenized_string_input_tokens)
+            #print('retoknized string    ', bpe.decode(trainer.task.source_dictionary.string(retokenized_string_input_tokens.cpu()[0], None)))
+            #if not torch.all(torch.eq(retokenized_string_input_tokens[0],samples['net_input']['src_tokens'][0])):
+            #    print('resegmentation issue, re-doing the BPE!')
+            #    samples['net_input']['src_tokens'] = retokenized_string_input_tokens
+            #    print(samples['net_input']['src_tokens'])
+            #print('\n')
 
             samples, predictions = run_inference_and_overwrite_samples(samples)
             #print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
@@ -180,12 +196,12 @@ def malicious_nonsense(args, trainer, generator):
                 candidate_input_tokens = hotflip_attack(input_gradient,
                                                           embedding_weight,
                                                           samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                          num_candidates=200,
+                                                          num_candidates=20,
                                                           increase_loss=False)
             elif attack_mode == 'random':
                 candidate_input_tokens = random_attack(embedding_weight,
                                                          samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                         num_candidates=200)
+                                                         num_candidates=20)
 
             new_found_input_tokens = None
             batch_size = 64
@@ -207,7 +223,40 @@ def malicious_nonsense(args, trainer, generator):
                     if changed_positions[index]: # if we have already changed this position, skip
                         continue
 
-                    current_inference_samples['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).cuda().squeeze(0) # change on token                    
+                    original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index])
+                    current_inference_samples['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).cuda().squeeze(0) # change onetoken
+
+                    # check if the BPE has changed, and if so, replace the samples
+                    string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_samples['net_input']['src_tokens'][current_batch_size].cpu(), None))
+                    retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0).cuda()
+                    #print('\n')
+                    #print(samples['net_input']['src_tokens'])
+                    #print(retokenized_string_input_tokens[0])
+                    if len(retokenized_string_input_tokens[0]) != len(current_inference_samples['net_input']['src_tokens'][current_batch_size]) or not torch.all(torch.eq(retokenized_string_input_tokens[0],current_inference_samples['net_input']['src_tokens'][current_batch_size])):
+                        print('resegmentation issue, re-doing the BPE!')
+                        print(current_inference_samples['net_input']['src_tokens'][current_batch_size])
+                        #print('before', current_inference_samples['net_input']['src_tokens'][current_batch_size])
+                        #current_inference_samples['net_input']['src_tokens'][current_batch_size] = retokenized_string_input_tokens[0]
+                        #print('before', current_inference_samples['net_input']['src_tokens'][current_batch_size])
+                        current_inference_samples['net_input']['src_tokens'][current_batch_size][index] = original_token
+                        print(current_inference_samples['net_input']['src_tokens'][current_batch_size])
+                        print('current source string', string_input_tokens)
+                        print('retoknized string    ', bpe.decode(trainer.task.source_dictionary.string(retokenized_string_input_tokens.cpu()[0], None)))
+                        print('\n')
+
+            #string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None))
+            #print('current source BPE id', samples['net_input']['src_tokens'])
+            #retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0).cuda()
+            #print('retokenized BPE ID   ', retokenized_string_input_tokens)
+            #if not torch.all(torch.eq(retokenized_string_input_tokens[0],samples['net_input']['src_tokens'][0])):
+            #    print('resegmentation issue, re-doing the BPE!')
+            #    samples['net_input']['src_tokens'] = retokenized_string_input_tokens
+            #    print(samples['net_input']['src_tokens'])
+            #print('\n')
+                        continue
+                    else:
+                        print('no issue')
+
                     current_batch_size += 1
                     current_batch_changed_position.append(index) # save its changed position
 
@@ -339,6 +388,26 @@ def targeted_flips(args, trainer, generator):
             if len(desired_output_token) != 1:
                 print("NOT ONE BPE TOKEN!!!")
                 continue
+        else:
+            exit("use interactive mode")
+            #targets = samples['target'].cpu()[0]
+            #for position in range(len(targets)):
+            #    original_output_token = targets[position]
+            #    print(bpe.decode(trainer.task.target_dictionary.string(original_output_token.unsqueeze(0), None)))
+            #    if True: # somehow check if its a work
+            #    for syn in wordnet.synsets()
+            #exit()
+            # ill have to keep the position fixed where I am looking
+            # 
+#antonyms = [] 
+
+#for syn in wordnet.synsets("good"): 
+#    for l in syn.lemmas(): 
+#        if l.antonyms(): 
+#            antonyms.append(l.antonyms()[0].name()) 
+
+#print(set(antonyms))
+
 
         for i in range(samples['ntokens'] * 3): # this many iters over a single batch. Gradient attack will early stop
             print('\nCurrent Input  ', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
@@ -372,12 +441,12 @@ def targeted_flips(args, trainer, generator):
                 candidate_input_tokens = hotflip_attack(input_gradient,
                                                           embedding_weight,
                                                           samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                          num_candidates=200,
+                                                          num_candidates=20,
                                                           increase_loss=False)
             elif attack_mode == 'random':
                 candidate_input_tokens = random_attack(embedding_weight,
                                                          samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                         num_candidates=200)
+                                                         num_candidates=20)
 
             new_found_input_tokens = None
             batch_size = 64

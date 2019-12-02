@@ -165,10 +165,11 @@ def get_parser(desc, default_task='translation'):
 
     parser = argparse.ArgumentParser(allow_abbrev=False)
     # fmt: off
-    parser.add_argument('--targeted_flips', action='store_true')
-    parser.add_argument('--random_start', action='store_true')
+    parser.add_argument('--targeted-flips', action='store_true')
+    parser.add_argument('--random-start', action='store_true')
+    parser.add_argument('--get-multiple-results', action='store_true')
     parser.add_argument('--no-check-resegmentation', action='store_true', default=False)
-    parser.add_argument('--interactive_attacks', action='store_true')
+    parser.add_argument('--interactive-attacks', action='store_true')
     parser.add_argument('--no-progress-bar', action='store_true', help='disable progress bar')
     parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                         help='log progress every N batches (when progress bar is disabled)')

@@ -886,3 +886,17 @@ def transformer_wmt_en_de_big_align(args):
     args.alignment_heads = getattr(args, 'alignment_heads', 1)
     args.alignment_layer = getattr(args, 'alignment_layer', 4)
     transformer_wmt_en_de_big(args)
+
+@register_model_architecture('transformer', 'transformer_flores')
+def transformer_flores(args):
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 2048)
+    args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 8)
+    args.encoder_layers = getattr(args, 'encoder_layers', 5)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 2048)
+    args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 8)
+    args.decoder_layers = getattr(args, 'decoder_layers', 5)
+    args.encoder_normalize_before = getattr(args, 'encoder_normalize_before', True)
+    args.decoder_normalize_before = getattr(args, 'decoder_normalize_before', True)
+    base_architecture(args)

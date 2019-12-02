@@ -227,7 +227,7 @@ class WSCTask(FairseqTask):
 
         def get_masked_input(tokens, mask):
             masked_tokens = tokens.clone()
-            masked_tokens[mask] = self.mask
+            masked_tokens[mask.bool()] = self.mask
             return masked_tokens
 
         def get_lprobs(tokens, mask):
@@ -252,7 +252,7 @@ class WSCTask(FairseqTask):
             best_idx = cand_lprobs.argmax().item()
             full_cand = sample['candidate_tokens'][0][best_idx]
             mask = sample['candidate_masks'][0][best_idx]
-            toks = full_cand[mask]
+            toks = full_cand[mask.bool()]
             return self.bpe.decode(self.source_dictionary.string(toks)).strip()
 
     @property
@@ -270,6 +270,7 @@ class WinograndeTask(WSCTask):
     Task for WinoGrande dataset. Efficient implementation for Winograd schema
     tasks with exactly two candidates, one of which is correct.
     """
+
     @classmethod
     def setup_task(cls, args, **kwargs):
         assert args.criterion == 'winogrande', 'Must set --criterion=winogrande'
@@ -279,7 +280,6 @@ class WinograndeTask(WSCTask):
         print('| dictionary: {} types'.format(len(vocab)))
 
         return cls(args, vocab)
-
 
     def load_dataset(self, split, epoch=0, combine=False, data_path=None, return_only=False, **kwargs):
         """Load a given dataset split.
@@ -299,7 +299,7 @@ class WinograndeTask(WSCTask):
         candidate_masks = []
         candidate_lengths = []
 
-        itr = wsc_utils.winogrande_jsonl_iterator(data_path, eval=split=='test')
+        itr = wsc_utils.winogrande_jsonl_iterator(data_path, eval=(split == 'test'))
 
         for sample in itr:
             sentence, pronoun_span, query, cand_text = sample

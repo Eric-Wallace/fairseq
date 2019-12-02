@@ -7,7 +7,15 @@ import numpy as np
 import torch.utils.data
 
 
-class FairseqDataset(torch.utils.data.Dataset):
+class EpochListening:
+    """Mixin for receiving updates whenever the epoch increments."""
+    def set_epoch(self, epoch):
+        """Will receive the updated epoch number at the beginning of the epoch.
+        """
+        pass
+
+
+class FairseqDataset(torch.utils.data.Dataset, EpochListening):
     """A dataset that provides helpers for batching."""
 
     def __getitem__(self, index):
@@ -47,9 +55,18 @@ class FairseqDataset(torch.utils.data.Dataset):
         """Whether this dataset supports prefetching."""
         return False
 
+    def attr(self, attr: str, index: int):
+        return getattr(self, attr, None)
+
     def prefetch(self, indices):
         """Prefetch the data required for this epoch."""
         raise NotImplementedError
 
-    def set_epoch(self, epoch):
-        pass
+
+class FairseqIterableDataset(torch.utils.data.IterableDataset, EpochListening):
+    """For datasets that need to be read sequentially, usually because the data
+    is being streamed or otherwise can't be manipulated on a single machine.
+    """
+
+    def __iter__(self):
+        raise NotImplementedError

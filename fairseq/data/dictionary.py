@@ -74,7 +74,10 @@ class Dictionary(object):
             else:
                 return self[i]
 
-        sent = ' '.join(token_string(i) for i in tensor if i != self.eos())
+        if hasattr(self, 'bos_index'):
+            sent = ' '.join(token_string(i) for i in tensor if (i != self.eos()) and (i != self.bos()))
+        else:
+            sent = ' '.join(token_string(i) for i in tensor if i != self.eos())
         return data_utils.process_bpe_symbol(sent, bpe_symbol)
 
     def unk_string(self, escape=False):
@@ -172,7 +175,7 @@ class Dictionary(object):
         return self.unk_index
 
     @classmethod
-    def load(cls, f, ignore_utf_errors=False):
+    def load(cls, f):
         """Loads the dictionary from a text file with the format:
 
         ```
@@ -182,22 +185,18 @@ class Dictionary(object):
         ```
         """
         d = cls()
-        d.add_from_file(f, ignore_utf_errors)
+        d.add_from_file(f)
         return d
 
-    def add_from_file(self, f, ignore_utf_errors=False):
+    def add_from_file(self, f):
         """
         Loads a pre-existing dictionary from a text file and adds its symbols
         to this instance.
         """
         if isinstance(f, str):
             try:
-                if not ignore_utf_errors:
-                    with open(f, 'r', encoding='utf-8') as fd:
-                        self.add_from_file(fd)
-                else:
-                    with open(f, 'r', encoding='utf-8', errors='ignore') as fd:
-                        self.add_from_file(fd)
+                with open(f, 'r', encoding='utf-8') as fd:
+                    self.add_from_file(fd)
             except FileNotFoundError as fnfe:
                 raise fnfe
             except UnicodeError:

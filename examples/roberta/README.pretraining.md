@@ -4,7 +4,7 @@ This tutorial will walk you through pretraining RoBERTa over your own data.
 
 ### 1) Preprocess the data
 
-Data should be preprocessed following the [language modeling format](/examples/language_model).
+Data should be preprocessed following the [language modeling format](/examples/language_model), i.e. each document should be separated by an empty line (only useful with `--sample-break-mode complete_doc`). Lines will be concatenated as a 1D text stream during training.
 
 We'll use the [WikiText-103 dataset](https://www.salesforce.com/products/einstein/ai-research/the-wikitext-dependency-language-modeling-dataset/)
 to demonstrate how to preprocess raw text data with the GPT-2 BPE. Of course
@@ -54,31 +54,34 @@ PEAK_LR=0.0005          # Peak learning rate, adjust as needed
 TOKENS_PER_SAMPLE=512   # Max sequence length
 MAX_POSITIONS=512       # Num. positional embeddings (usually same as above)
 MAX_SENTENCES=16        # Number of sequences per batch (batch size)
-UPDATE_FREQ=16           # Increase the batch size 16x
+UPDATE_FREQ=16          # Increase the batch size 16x
 
 DATA_DIR=data-bin/wikitext-103
 
 fairseq-train --fp16 $DATA_DIR \
     --task masked_lm --criterion masked_lm \
     --arch roberta_base --sample-break-mode complete --tokens-per-sample $TOKENS_PER_SAMPLE \
-    --optimizer adam --adam-betas '(0.9, 0.98)' --adam-eps 1e-6 --clip-norm 0.0 \
+    --optimizer adam --adam-betas '(0.9,0.98)' --adam-eps 1e-6 --clip-norm 0.0 \
     --lr-scheduler polynomial_decay --lr $PEAK_LR --warmup-updates $WARMUP_UPDATES --total-num-update $TOTAL_UPDATES \
     --dropout 0.1 --attention-dropout 0.1 --weight-decay 0.01 \
     --max-sentences $MAX_SENTENCES --update-freq $UPDATE_FREQ \
     --max-update $TOTAL_UPDATES --log-format simple --log-interval 1
 ```
 
-The above command assumes training on 8x32GB V100 GPUs. Each GPU uses a batch
-size of 16 sequences (`$MAX_SENTENCES`) and accumulates gradients to further
-increase the batch size by 16x (`$UPDATE_FREQ`), for a total batch size of 2048
-sequences. If you have fewer GPUs or GPUs with less memory you may need to
-reduce `$MAX_SENTENCES` and increase `$UPDATE_FREQ` to compensate. Alternatively
-if you have more GPUs you can decrease `$UPDATE_FREQ` accordingly to increase
-training speed.
+**Note:** You can optionally resume training the released RoBERTa base model by
+adding `--restore-file /path/to/roberta.base/model.pt`.
 
-Also note that the learning rate and batch size are tightly connected and need
-to be adjusted together. We generally recommend increasing the learning rate as
-you increase the batch size according to the following table (although it's also
+**Note:** The above command assumes training on 8x32GB V100 GPUs. Each GPU uses
+a batch size of 16 sequences (`$MAX_SENTENCES`) and accumulates gradients to
+further increase the batch size by 16x (`$UPDATE_FREQ`), for a total batch size
+of 2048 sequences. If you have fewer GPUs or GPUs with less memory you may need
+to reduce `$MAX_SENTENCES` and increase `$UPDATE_FREQ` to compensate.
+Alternatively if you have more GPUs you can decrease `$UPDATE_FREQ` accordingly
+to increase training speed.
+
+**Note:** The learning rate and batch size are tightly connected and need to be
+adjusted together. We generally recommend increasing the learning rate as you
+increase the batch size according to the following table (although it's also
 dataset dependent, so don't rely on the following values too closely):
 
 batch size | peak learning rate

@@ -137,7 +137,7 @@ def main(args):
                     hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
                         hypo_tokens=hypo['tokens'].int().cpu(),
                         src_str=src_str,
-                        alignment=hypo['alignment'].int().cpu() if hypo['alignment'] is not None else None,
+                        alignment=hypo['alignment'],
                         align_dict=align_dict,
                         tgt_dict=tgt_dict,
                         remove_bpe=args.remove_bpe,
@@ -156,8 +156,20 @@ def main(args):
                         if args.print_alignment:
                             print('A-{}\t{}'.format(
                                 sample_id,
-                                ' '.join(map(lambda x: str(utils.item(x)), alignment))
+                                ' '.join(['{}-{}'.format(src_idx, tgt_idx) for src_idx, tgt_idx in alignment])
                             ))
+
+                        if args.print_step:
+                            print('I-{}\t{}'.format(sample_id, hypo['steps']))
+
+                        if getattr(args, 'retain_iter_history', False):
+                            print("\n".join([
+                                    'E-{}_{}\t{}'.format(
+                                        sample_id, step,
+                                        utils.post_process_prediction(
+                                            h['tokens'].int().cpu(),
+                                            src_str, None, None, tgt_dict, None)[1])
+                                        for step, h in enumerate(hypo['history'])]))
 
                     # Score only the top hypothesis
                     if has_target and j == 0:
@@ -177,6 +189,7 @@ def main(args):
         num_sentences, gen_timer.n, gen_timer.sum, num_sentences / gen_timer.sum, 1. / gen_timer.avg))
     if has_target:
         print('| Generate {} with beam={}: {}'.format(args.gen_subset, args.beam, scorer.result_string()))
+
     return scorer
 
 

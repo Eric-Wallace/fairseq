@@ -166,6 +166,9 @@ def get_parser(desc, default_task='translation'):
     parser = argparse.ArgumentParser(allow_abbrev=False)
     # fmt: off
     parser.add_argument('--targeted-flips', action='store_true')
+    parser.add_argument('--malicious-appends', action='store_true')
+    parser.add_argument('--universal-triggers', action='store_true')
+    parser.add_argument('--malicious-nonsense', action='store_true')
     parser.add_argument('--random-start', action='store_true')
     parser.add_argument('--get-multiple-results', action='store_true')
     parser.add_argument('--no-check-resegmentation', action='store_true', default=False)

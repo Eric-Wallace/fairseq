@@ -19,7 +19,7 @@ class CrossEntropyCriterion(FairseqCriterion):
     def __init__(self, args, task):
         super().__init__(args, task)
 
-    def forward(self, model, sample, reduce=True, return_prediction=False, mask=None):
+    def forward(self, model, sample, reduce=True, return_prediction=False, mask=None, eos_loss=False):
         """Compute the loss for the given sample.
 
         Returns a tuple with three elements:
@@ -28,7 +28,7 @@ class CrossEntropyCriterion(FairseqCriterion):
         3) logging outputs to display while training
         """
         net_output = model(**sample['net_input'])
-        loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce, mask=mask)
+        loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce, mask=mask, eos_loss=eos_loss)
         sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         logging_output = {
             'loss': utils.item(loss.data) if reduce else loss.data,
@@ -41,21 +41,28 @@ class CrossEntropyCriterion(FairseqCriterion):
             return loss, sample_size, logging_output, model.get_normalized_probs(net_output, log_probs=True)
         return loss, sample_size, logging_output
 
-    def compute_loss(self, model, net_output, sample, reduce=True, mask=None):
+    def compute_loss(self, model, net_output, sample, reduce=True, mask=None, eos_loss=False):
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
-        loss_target = deepcopy(target)
+        loss_target = deepcopy(target)        
         if mask is not None:
+            assert eos_loss is not None
             for pos, value in enumerate(loss_target):
                 if not mask[pos % len(mask)]: # TODO, TODO, TODO, TODO, this % should be ok because all masks are the same when this thing is batched
                     loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
+        if eos_loss:
+            for pos, value in enumerate(loss_target):                
+                if value != 2:                
+                    loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
+
+        # TODO, make the loss for only certain positions
         loss = F.nll_loss(
             lprobs,
             loss_target,
             ignore_index=self.padding_idx,
             reduction='sum' if reduce else 'none',
-        )
+        )        
         return loss, loss
 
     @staticmethod
@@ -74,3 +81,4 @@ class CrossEntropyCriterion(FairseqCriterion):
         if sample_size != ntokens:
             agg_output['nll_loss'] = loss_sum / ntokens / math.log(2)
         return agg_output
+

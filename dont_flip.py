@@ -131,6 +131,7 @@ def build_inference_samples(samples, batch_size, args, candidate_input_tokens, c
     samples_repeated_by_batch['net_input']['prev_output_tokens'] = samples_repeated_by_batch['net_input']['prev_output_tokens'].repeat(batch_size, 1)
     samples_repeated_by_batch['net_input']['src_tokens'] = samples_repeated_by_batch['net_input']['src_tokens'].repeat(batch_size, 1)
     samples_repeated_by_batch['net_input']['src_lengths'] = samples_repeated_by_batch['net_input']['src_lengths'].repeat(batch_size, 1)
+    samples_repeated_by_batch['nsentences'] = batch_size
 
     all_inference_samples = [] # stores a list of batches of candidates
     all_changed_positions = [] # stores all the changed_positions for each batch element
@@ -678,6 +679,17 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
                 _, __, losses = get_input_grad(trainer, inference_sample, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
                 losses = losses.reshape(batch_size, samples['target'].shape[1]) # unflatten losses
                 losses = torch.sum(losses, dim=1)
+            
+                # this subtracts out the loss for copying the input. We don't want copies because they don't transfer. It seems like the black-box systems have heuristics to prevent copying.
+                input_sample_target_same_as_source = deepcopy(inference_sample)
+                input_sample_target_same_as_source['target'] = deepcopy(inference_sample['net_input']['src_tokens'])
+                input_sample_target_same_as_source['net_input']['prev_output_tokens'] = torch.cat((input_sample_target_same_as_source['target'][0][-1:], input_sample_target_same_as_source['target'][0][:-1]), dim=0).unsqueeze(dim=0).repeat(batch_size, 1)
+                input_sample_target_same_as_source['ntokens'] = input_sample_target_same_as_source['target'].shape[1] * batch_size                  
+                _, __, copy_losses = get_input_grad(trainer, input_sample_target_same_as_source, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
+                copy_losses = copy_losses.reshape(batch_size, input_sample_target_same_as_source['target'].shape[1]) # unflatten losses
+                copy_losses = torch.sum(copy_losses, dim=1)                
+                losses = losses + 2 * copy_losses
+
                 for loss_indx, loss in enumerate(losses):
                     # if find_ignored_tokens:
                     #     if loss < current_best_found_loss:

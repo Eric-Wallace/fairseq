@@ -93,16 +93,39 @@ def run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_ov
 
     return samples, predictions
 
-# replaces the original_output_token in the target with desired_output_token and returns the corresponding binary mask
+# # replaces the original_output_token in the target with desired_output_token and returns the corresponding binary mask
+# def find_and_replace_target(samples, original_output_token, desired_output_token):
+#     mask = []
+#     for idx, current_token in enumerate(samples['target'].cpu()[0]):
+#         if current_token == original_output_token: # replace target token with desired
+#             mask.append(1)
+#             samples['target'][0][idx] = desired_output_token
+#         else:
+#             mask.append(0)
+#     return samples, mask
+
+# find the position of the start and end of the original_output_token and replaces it will desired_output_token
+# desired_output_token can be shorter, longer, or the same length as original_output_token
 def find_and_replace_target(samples, original_output_token, desired_output_token):
     mask = []
-    for idx, current_token in enumerate(samples['target'].cpu()[0]):
-        if current_token == original_output_token: # replace target token with desired
-            mask.append(1)
-            samples['target'][0][idx] = desired_output_token
-        else:
-            mask.append(0)
+    start_pos = None
+    end_pos = None    
+    for idx, current_token in enumerate(samples['target'].cpu()[0]):        
+        if current_token == original_output_token[0]: # TODO, the logic here will fail when a BPE id is repeated
+            start_pos = idx
+        if current_token == original_output_token[-1]:
+            end_pos = idx            
+    if start_pos is None or end_pos is None:
+        exit('find and replace target failed to find token')
+    
+    last_tokens_of_target = deepcopy(samples['target'][0][end_pos+1:])
+    new_start = torch.cat((samples['target'][0][0:start_pos], desired_output_token.cuda()), dim=0)    
+    new_target = torch.cat((new_start, last_tokens_of_target), dim=0)    
+    mask = [0] * start_pos + [1] * len(desired_output_token) + [0] * (len(new_target) - len(desired_output_token) - start_pos)    
+    samples['target'] = new_target.unsqueeze(0)    
+    samples['net_input']['prev_output_tokens'] = torch.cat((samples['target'][0][-1:], samples['target'][0][:-1]), dim=0).unsqueeze(dim=0)
     return samples, mask
+
 
 # take samples (of batch size 1) and repeat it batch_size times to do batched inference / loss calculation
 def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, untouchable_token_blacklist=None, adversarial_token_blacklist=None):
@@ -195,6 +218,7 @@ def main(args):
     args.max_sentences_valid = 1  # batch size 1 at the moment
 
     # Initialize CUDA
+    np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     # setup task, model, loss function, and trainer
@@ -424,12 +448,14 @@ def targeted_flips(args, trainer, generator, embedding_weight, itr, bpe):
         adversarial_token_blacklist_string = input('Enter optional space seperated blacklist of invalid adversarial words ')
         untouchable_token_blacklist_string = input('Enter optional space seperated blacklist of source words to keep ')
 
-        # -1 strips off <eos> token (whihc is BPE id 2)
+        # -1 strips off <eos> token
         original_output_token = trainer.task.source_dictionary.encode_line(bpe.encode(original_output_token)).long()[0:-1]
         desired_output_token = trainer.task.source_dictionary.encode_line(bpe.encode(desired_output_token)).long()[0:-1]
-        if len(original_output_token) != 1 or len(desired_output_token) != 1:
-           print("Error: more than one BPE token", len(original_output_token), len(desired_output_token))
-           return
+        # if len(original_output_token) != 1 or len(desired_output_token) != 1:
+        #    print("Error: more than one BPE token", len(original_output_token), len(desired_output_token))
+        #    return
+        print("Original Output Len", len(original_output_token), "Desired Output Len", len(desired_output_token))
+        #    return
 
         # don't change any of these tokens in the input
         untouchable_token_blacklist = []
@@ -437,11 +463,13 @@ def targeted_flips(args, trainer, generator, embedding_weight, itr, bpe):
             untouchable_token_blacklist_string = untouchable_token_blacklist_string.split(' ')
             for token in untouchable_token_blacklist_string:
                 token = trainer.task.source_dictionary.encode_line(bpe.encode(token)).long()[0:-1]
-                if len(token) == 1:
-                    untouchable_token_blacklist.append(token.squeeze(0))
+                #if len(token) == 1:
+                #    untouchable_token_blacklist.append(token.squeeze(0))
+                untouchable_token_blacklist.extend(token)
 
         # don't insert any of these tokens (or their synonyms) into the source
-        adversarial_token_blacklist = [desired_output_token] # don't let the attack put these words in
+        adversarial_token_blacklist = []
+        adversarial_token_blacklist.extend(desired_output_token) # don't let the attack put these words in        
         if adversarial_token_blacklist_string is not None and adversarial_token_blacklist_string != '' and adversarial_token_blacklist_string != '\n':
             adversarial_token_blacklist_string = adversarial_token_blacklist_string.split(' ')
             synonyms = set()
@@ -454,8 +482,9 @@ def targeted_flips(args, trainer, generator, embedding_weight, itr, bpe):
                             synonyms.add(l.name())
             for synonym in synonyms:
                 synonym_bpe = trainer.task.source_dictionary.encode_line(bpe.encode(synonym)).long()[0:-1]
-                if len(synonym_bpe) == 1:
-                    adversarial_token_blacklist.append(synonym_bpe.squeeze(0))
+                untouchable_token_blacklist.extend(synonym_bpe)
+                # if len(synonym_bpe) == 1:
+                #     adversarial_token_blacklist.append(synonym_bpe.squeeze(0))
 
     # overwrite target with user desired output
     samples, mask = find_and_replace_target(samples, original_output_token, desired_output_token)
@@ -471,7 +500,7 @@ def targeted_flips(args, trainer, generator, embedding_weight, itr, bpe):
         # print("Untouchable Tokens: ", [bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(token.unsqueeze(0)), None)) for token in untouchable_token_blacklist])
         # print("Blacklisted Adv. Tokens: ", [bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(token.unsqueeze(0)), None)) for token in adversarial_token_blacklist])
         changed_positions = [False] * (samples['net_input']['src_tokens'].shape[1] - 1) # if a position is already changed, don't change it again. [False] for the sequence length, but minus -1 to ignore pad
-        samples = deepcopy(original_samples)
+        samples = deepcopy(original_samples)        
         for i in range(samples['ntokens'] * 3): # this many iters over a single example. Gradient attack will early stop
             # print('\nCurrent Input ', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
             assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad is always there
@@ -480,8 +509,8 @@ def targeted_flips(args, trainer, generator, embedding_weight, itr, bpe):
             # print('Current Output ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
             assert all(torch.eq(samples['target'].squeeze(0), original_target.squeeze(0))) # make sure target is never updated
             if new_found_input_tokens is not None:
-                print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-                print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+                print('\nFinal input', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+                print('Final output', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
                 break
 
             # clear grads, compute new grads, and get candidate tokens
@@ -501,11 +530,16 @@ def targeted_flips(args, trainer, generator, embedding_weight, itr, bpe):
                     # if prediction is the same, then save input
                     desired_output_token_appeared = False
                     original_output_token_present = False
-                    for idx, current_token in enumerate(prediction):
-                        if current_token == desired_output_token: # we want the desired_output_token to be present
-                            desired_output_token_appeared = True
-                        elif current_token == original_output_token: # and we want the original output_token to be gone
-                            original_output_token_present = True
+                    # for idx, current_token in enumerate(prediction):                        
+
+                    if all(token in prediction for token in desired_output_token): # we want the desired_output_token to be present
+                        desired_output_token_appeared = True
+                    if any(token in prediction for token in original_output_token):  # and we want the original output_token to be gone
+                        original_output_token_present = True
+                        # if current_token in desired_output_token: # we want the desired_output_token to be present
+                        #     desired_output_token_appeared = True
+                        # elif current_token == original_output_token: # and we want the original output_token to be gone
+                        #     original_output_token_present = True                    
                     if desired_output_token_appeared and not original_output_token_present:
                         new_found_input_tokens = deepcopy(inference_sample['net_input']['src_tokens'][prediction_indx].unsqueeze(0))
                         changed_positions[all_changed_positions[inference_indx][prediction_indx]] = True

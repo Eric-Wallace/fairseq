@@ -600,12 +600,12 @@ def targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe
 
 def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, bpe):
     # these ╩ and 上 seem to cause lots of errors for my model but not the target models
-    if samples['ntokens'] < 15: # these aren't that interesting to break
-        return None
-
     find_ignored_tokens = False # I think the ignored tokens if funny but not that interesting
     if args.interactive_attacks: # get user input and build samples
         samples = get_user_input(trainer, bpe)
+    else:
+        if samples['ntokens'] < 15: # these aren't that interesting to break
+            return None
     samples, original_prediction = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=False)
     print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
     #print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(original_prediction), None)))
@@ -688,7 +688,7 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
                 _, __, copy_losses = get_input_grad(trainer, input_sample_target_same_as_source, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
                 copy_losses = copy_losses.reshape(batch_size, input_sample_target_same_as_source['target'].shape[1]) # unflatten losses
                 copy_losses = torch.sum(copy_losses, dim=1)                
-                losses = losses + 2 * copy_losses
+                losses = losses + 0.3 * copy_losses
 
                 for loss_indx, loss in enumerate(losses):
                     # if find_ignored_tokens:

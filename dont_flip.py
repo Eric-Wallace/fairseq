@@ -239,13 +239,14 @@ def main(args):
         for valid_sub_split in args.valid_subset.split(','): # load validation data
             task.load_dataset(valid_sub_split, combine=False, epoch=0)
     models, _= checkpoint_utils.load_model_ensemble(args.path.split(':'), arg_overrides={}, task=task)
-    model = models[0]
+    model = models[0]    
+
     if torch.cuda.is_available() and not args.cpu:
         assert torch.cuda.device_count() == 1 # only works on 1 GPU for now
         torch.cuda.set_device(0)
-        model.cuda()
+        model.cuda()        
     args.beam = 1 # beam size 1 for now
-    model.make_generation_fast_(beamable_mm_beam_size=args.beam, need_attn=False)
+    model.make_generation_fast_(beamable_mm_beam_size=args.beam, need_attn=False)    
 
     criterion = task.build_criterion(args)
     trainer = Trainer(args, task, model, criterion)
@@ -302,12 +303,12 @@ def attack(args, trainer, generator, embedding_weight, itr, bpe):
             continue
 
         num_total_samples += 1.0
-        print(changed_positions)
+        # print(changed_positions)
         if any(changed_positions):
             num_samples_changed += 1.0
             num_tokens_changed += sum(changed_positions)
             total_num_tokens += len(changed_positions)
-        print('\n')
+        # print('\n')
     print('Total Num Samples', num_total_samples)
     print('Percent Samples Changed', num_samples_changed / num_total_samples)
     print('Percent Tokens Changed', num_tokens_changed / total_num_tokens)
@@ -330,10 +331,10 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
 
         changed_positions = [False] * (samples['net_input']['src_tokens'].shape[1] - 1) # if a position is already changed, don't change it again. [False] for the sequence length, but minus -1 to ignore pad
         samples = deepcopy(original_samples)
-
+        print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
         for i in range(samples['ntokens'] * 3): # this many iters over a single example. Gradient attack will early stop            
-            if new_found_input_tokens is not None: # only print when a new best has been found
-                print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+            #if new_found_input_tokens is not None: # only print when a new best has been found
+                #print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
             assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad it always there
 
             samples, predictions = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=True)
@@ -376,7 +377,7 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
         for indx, position in enumerate(changed_positions):
             if position:
                 adversarial_token_blacklist.append(samples['net_input']['src_tokens'][0][indx].cpu().unsqueeze(0))
-        print('\n')
+        print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
 
     return changed_positions
 
@@ -728,3 +729,4 @@ args.reset_dataloader = True
 args.reset_lr_scheduler = True
 args.path = args.restore_file
 main(args)
+

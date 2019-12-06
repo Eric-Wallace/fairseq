@@ -117,7 +117,7 @@ def find_and_replace_target(samples, original_output_token, desired_output_token
 
 
 # take samples (of batch size 1) and repeat it batch_size times to do batched inference / loss calculation
-def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, untouchable_token_blacklist=None, adversarial_token_blacklist=None, num_trigger_tokens=False):
+def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, untouchable_token_blacklist=None, adversarial_token_blacklist=None, num_trigger_tokens=None):    
     # move to cpu to make this faster
     samples['net_input']['src_tokens'] = samples['net_input']['src_tokens'].cpu()
     samples['net_input']['src_lengths'] = samples['net_input']['src_lengths'].cpu()
@@ -148,11 +148,11 @@ def build_inference_samples(samples, batch_size, args, candidate_input_tokens, c
             if untouchable_token_blacklist is not None and current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use].cpu() in untouchable_token_blacklist: # don't touch the word if its in the blacklist
                 continue
             if adversarial_token_blacklist is not None and any([token_id == blacklisted_token for blacklisted_token in adversarial_token_blacklist]): # don't insert any blacklisted tokens into the source side
-                continue
-            if args.malicious_nonsense and changed_positions[index]: # if we have already changed this position, skip. Only do this when skip_source_position is None, aka only for malicious nonsense
+                continue                        
+            if args.malicious_nonsense and changed_positions[index]: # if we have already changed this position, skip. Only do this for malicious nonsense                
                 continue
 
-            original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use])
+            original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use])   
             current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] = torch.LongTensor([token_id]).squeeze(0) # change onetoken
 
             # check if the BPE has changed, and if so, replace the samples
@@ -219,10 +219,10 @@ def get_user_input(trainer, bpe):
 def update_attack_mode_state_machine(attack_mode):
     if attack_mode == 'gradient': # once gradient fails, start using the decoder gradient
         attack_mode = 'decoder_gradient'
-        # print('no more succesful flips, switching from gradient to decoder_gradient')
+        #print('no more succesful flips, switching from gradient to decoder_gradient')
     elif attack_mode == 'decoder_gradient':
         attack_mode = 'random'
-        # print('no more succesful flips, switching from decoder_gradient to random')
+        #print('no more succesful flips, switching from decoder_gradient to random')
     return attack_mode
 
 def main(args):
@@ -331,7 +331,7 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
         changed_positions = [False] * (samples['net_input']['src_tokens'].shape[1] - 1) # if a position is already changed, don't change it again. [False] for the sequence length, but minus -1 to ignore pad
         samples = deepcopy(original_samples)
 
-        for i in range(samples['ntokens'] * 3): # this many iters over a single example. Gradient attack will early stop
+        for i in range(samples['ntokens'] * 3): # this many iters over a single example. Gradient attack will early stop            
             if new_found_input_tokens is not None: # only print when a new best has been found
                 print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
             assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad it always there
@@ -366,7 +366,7 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
             if new_found_input_tokens is not None:
                 if attack_mode == 'random':
                     attack_mode = 'gradient'
-                    # print('random worked, switching back to gradient')
+                    #print('random worked, switching back to gradient')
                 samples['net_input']['src_tokens'] = new_found_input_tokens
 
             # gradient is deterministic, so if it didnt flip another then its never going to
@@ -659,11 +659,10 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
             # clear grads, compute new grads, and get candidate tokens
             global extracted_grads
             extracted_grads = [] # clear old extracted_grads
-            # if find_ignored_tokens: # TODO, i had the False/True backwards for these...
-            #     increase_loss = False
-            # else:
-            #     increase_loss = True
-            increase_loss = True
+            if find_ignored_tokens:
+                increase_loss = False
+            else:
+                increase_loss = True            
             eos_loss = False # TODO, this doesn't seem to work when turned on
             candidate_input_tokens = get_attack_candidates(trainer, samples, attack_mode, embedding_weight, mask=None, increase_loss=increase_loss, eos_loss=eos_loss)
             candidate_input_tokens = candidate_input_tokens[-num_trigger_tokens:] # the trigger candidates are at the end
@@ -681,39 +680,40 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
                 losses = torch.sum(losses, dim=1)
             
                 # this subtracts out the loss for copying the input. We don't want copies because they don't transfer. It seems like the black-box systems have heuristics to prevent copying.
-                input_sample_target_same_as_source = deepcopy(inference_sample)
-                input_sample_target_same_as_source['target'] = deepcopy(inference_sample['net_input']['src_tokens'])
-                input_sample_target_same_as_source['net_input']['prev_output_tokens'] = torch.cat((input_sample_target_same_as_source['target'][0][-1:], input_sample_target_same_as_source['target'][0][:-1]), dim=0).unsqueeze(dim=0).repeat(batch_size, 1)
-                input_sample_target_same_as_source['ntokens'] = input_sample_target_same_as_source['target'].shape[1] * batch_size                  
-                _, __, copy_losses = get_input_grad(trainer, input_sample_target_same_as_source, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
-                copy_losses = copy_losses.reshape(batch_size, input_sample_target_same_as_source['target'].shape[1]) # unflatten losses
-                copy_losses = torch.sum(copy_losses, dim=1)                
-                losses = losses + 0.3 * copy_losses
+                if not find_ignored_tokens:
+                    input_sample_target_same_as_source = deepcopy(inference_sample)
+                    input_sample_target_same_as_source['target'] = deepcopy(inference_sample['net_input']['src_tokens'])
+                    input_sample_target_same_as_source['net_input']['prev_output_tokens'] = torch.cat((input_sample_target_same_as_source['target'][0][-1:], input_sample_target_same_as_source['target'][0][:-1]), dim=0).unsqueeze(dim=0).repeat(batch_size, 1)
+                    input_sample_target_same_as_source['ntokens'] = input_sample_target_same_as_source['target'].shape[1] * batch_size                  
+                    _, __, copy_losses = get_input_grad(trainer, input_sample_target_same_as_source, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
+                    copy_losses = copy_losses.reshape(batch_size, input_sample_target_same_as_source['target'].shape[1]) # unflatten losses
+                    copy_losses = torch.sum(copy_losses, dim=1)                
+                    losses = losses + 0.3 * copy_losses
 
                 for loss_indx, loss in enumerate(losses):
-                    # if find_ignored_tokens:
-                    #     if loss < current_best_found_loss:
-                    #         current_best_found_loss = loss
-                    #         current_best_found_tokens = inference_sample['net_input']['src_tokens'][loss_indx].unsqueeze(0)
-                    # else:
-                    if loss > current_best_found_loss:
-                        current_best_found_loss = loss
-                        current_best_found_tokens = inference_sample['net_input']['src_tokens'][loss_indx].unsqueeze(0)
+                    if find_ignored_tokens:
+                        if loss < current_best_found_loss:
+                            current_best_found_loss = loss
+                            current_best_found_tokens = inference_sample['net_input']['src_tokens'][loss_indx].unsqueeze(0)
+                    else:
+                        if loss > current_best_found_loss:
+                            current_best_found_loss = loss
+                            current_best_found_tokens = inference_sample['net_input']['src_tokens'][loss_indx].unsqueeze(0)
 
-            # if find_ignored_tokens:
-            #     if current_best_found_loss < best_found_loss: # update best tokens
-            #         best_found_loss = current_best_found_loss
-            #         samples['net_input']['src_tokens'] = current_best_found_tokens
-            #     # gradient is deterministic, so if it didnt flip another then its never going to
-            #     else:
-            #         attack_mode = update_attack_mode_state_machine(attack_mode)
-            # else:
-            if current_best_found_loss > best_found_loss: # update best tokens
-                best_found_loss = current_best_found_loss
-                samples['net_input']['src_tokens'] = current_best_found_tokens
+            if find_ignored_tokens:
+                if current_best_found_loss < best_found_loss: # update best tokens
+                    best_found_loss = current_best_found_loss
+                    samples['net_input']['src_tokens'] = current_best_found_tokens
                 # gradient is deterministic, so if it didnt flip another then its never going to
+                else:
+                    attack_mode = update_attack_mode_state_machine(attack_mode)
             else:
-                attack_mode = update_attack_mode_state_machine(attack_mode)
+                if current_best_found_loss > best_found_loss: # update best tokens
+                    best_found_loss = current_best_found_loss
+                    samples['net_input']['src_tokens'] = current_best_found_tokens
+                    # gradient is deterministic, so if it didnt flip another then its never going to
+                else:
+                    attack_mode = update_attack_mode_state_machine(attack_mode)
 
             for indx in range(len(samples['net_input']['src_tokens'][0])):
                 adversarial_token_blacklist.append(samples['net_input']['src_tokens'][0][indx].cpu().unsqueeze(0))

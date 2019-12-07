@@ -93,7 +93,7 @@ def run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_ov
 
     return samples, predictions
 
-# find the position of the start and end of the original_output_token and replaces it will desired_output_token
+# find the position of the start and end of the original_output_token and replaces it with desired_output_token
 # desired_output_token can be shorter, longer, or the same length as original_output_token
 def find_and_replace_target(samples, original_output_token, desired_output_token):
     mask = []
@@ -117,12 +117,12 @@ def find_and_replace_target(samples, original_output_token, desired_output_token
 
 
 # take samples (of batch size 1) and repeat it batch_size times to do batched inference / loss calculation
-def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, untouchable_token_blacklist=None, adversarial_token_blacklist=None, num_trigger_tokens=None):    
+def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, untouchable_token_blacklist=None, adversarial_token_blacklist=None, num_trigger_tokens=None):
     # move to cpu to make this faster
     samples['net_input']['src_tokens'] = samples['net_input']['src_tokens'].cpu()
     samples['net_input']['src_lengths'] = samples['net_input']['src_lengths'].cpu()
     samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cpu()
-    samples['target'] = samples['target'].cpu()    
+    samples['target'] = samples['target'].cpu()
 
     # copy and repeat the samples instead batch size elements
     samples_repeated_by_batch = deepcopy(samples)
@@ -148,17 +148,22 @@ def build_inference_samples(samples, batch_size, args, candidate_input_tokens, c
             if untouchable_token_blacklist is not None and current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use].cpu() in untouchable_token_blacklist: # don't touch the word if its in the blacklist
                 continue
             if adversarial_token_blacklist is not None and any([token_id == blacklisted_token for blacklisted_token in adversarial_token_blacklist]): # don't insert any blacklisted tokens into the source side
-                continue                        
-            if args.malicious_nonsense and changed_positions[index]: # if we have already changed this position, skip. Only do this for malicious nonsense                
+                continue
+            if args.malicious_nonsense and changed_positions[index]: # if we have already changed this position, skip. Only do this for malicious nonsense
                 continue
 
-            original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use])   
+            original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use])
             current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] = torch.LongTensor([token_id]).squeeze(0) # change onetoken
 
             # check if the BPE has changed, and if so, replace the samples
             if not args.no_check_resegmentation:
                 string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_samples['net_input']['src_tokens'][current_batch_size].cpu(), None))
                 retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0)
+                #print(bpe.decode(trainer.task.source_dictionary.string(retokenized_string_input_tokens[0].cpu(), None)))
+                #print(bpe.decode(trainer.task.source_dictionary.string(current_inference_samples['net_input']['src_tokens'][current_batch_size].cpu(), None)))
+                #print(retokenized_string_input_tokens[0].cpu())
+                #print(current_inference_samples['net_input']['src_tokens'][current_batch_size])
+                #dasdasd = input('enter')
                 if len(retokenized_string_input_tokens[0]) != len(current_inference_samples['net_input']['src_tokens'][current_batch_size]) or not torch.all(torch.eq(retokenized_string_input_tokens[0],current_inference_samples['net_input']['src_tokens'][current_batch_size])):
                     current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] = original_token
                     continue
@@ -171,8 +176,8 @@ def build_inference_samples(samples, batch_size, args, candidate_input_tokens, c
                 current_inference_samples = deepcopy(samples_repeated_by_batch)
                 current_batch_size = 0
                 all_changed_positions.append(current_batch_changed_position)
-                current_batch_changed_position = []    
-    
+                current_batch_changed_position = []
+
     samples['net_input']['src_tokens'] = samples['net_input']['src_tokens'].cuda()
     samples['net_input']['src_lengths'] = samples['net_input']['src_lengths'].cuda()
     samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()
@@ -187,10 +192,13 @@ def build_inference_samples(samples, batch_size, args, candidate_input_tokens, c
 def get_attack_candidates(trainer, samples, attack_mode, embedding_weight, mask=None, eos_loss=False, increase_loss=False):
     src_lengths, _, __ = get_input_grad(trainer, samples, mask=mask, eos_loss=eos_loss) # gradient is now filled
     if 'gradient' in attack_mode:
-        # position [1] in extracted_grads is the encoder embedding grads, [0] is decoder
-        if attack_mode == 'gradient':
-            gradient_position = 1
-        elif attack_mode == 'decoder_gradient':
+        if len(extracted_grads) > 1: # this is for models with shared embedding
+            # position [1] in extracted_grads is the encoder embedding grads, [0] is decoder
+            if attack_mode == 'gradient':
+                gradient_position = 1
+            elif attack_mode == 'decoder_gradient':
+                gradient_position = 0
+        else:
             gradient_position = 0
         input_gradient = extracted_grads[gradient_position][0][0:src_lengths[0]-1] # first [] gets decoder/encoder grads, then batch (currently size 1), then we index into before the padding (though there shouldn't be any padding at the moment because batch size 1). The -1 is to ignore the padding
         candidate_input_tokens = hotflip_attack(input_gradient,
@@ -207,6 +215,26 @@ def get_attack_candidates(trainer, samples, attack_mode, embedding_weight, mask=
 
     return candidate_input_tokens
 
+
+def read_file_input(trainer, bpe, i):
+    data = open('subsample_test','r').readlines()
+    if i < len(data):
+        file_input = data[i]
+    else:
+        return "invalid"
+    if '\'' in file_input or '\"' in file_input or '\\' in file_input or file_input == '\n' or file_input.strip() == '' or len(file_input) > 60:
+        return "invalid"
+    # tokenize input and get lengths
+    tokenized_bpe_input = trainer.task.source_dictionary.encode_line(bpe.encode(file_input)).long().unsqueeze(dim=0)
+    length_user_input = torch.LongTensor([len(tokenized_bpe_input[0])])
+    # build samples and set their targets with the model predictions
+    samples = {'net_input': {'src_tokens': tokenized_bpe_input, 'src_lengths': length_user_input}, 'ntokens': len(tokenized_bpe_input[0])} 
+    bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0]
+    for token in tokenized_bpe_input[0]:
+        if torch.eq(token, bpe_vocab_size) or torch.gt(token, bpe_vocab_size): # UNK
+            return 'invalid'
+    return samples
+
 def get_user_input(trainer, bpe):
     user_input = input('Enter your sentence: ')
     # tokenize input and get lengths
@@ -214,6 +242,10 @@ def get_user_input(trainer, bpe):
     length_user_input = torch.LongTensor([len(tokenized_bpe_input[0])])
     # build samples and set their targets with the model predictions
     samples = {'net_input': {'src_tokens': tokenized_bpe_input, 'src_lengths': length_user_input}, 'ntokens': len(tokenized_bpe_input[0])}
+    bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0]
+    for token in tokenized_bpe_input[0]:
+        if torch.eq(token, bpe_vocab_size) or torch.gt(token, bpe_vocab_size): # UNK
+            return 'invalid' 
     return samples
 
 def update_attack_mode_state_machine(attack_mode):
@@ -235,18 +267,18 @@ def main(args):
 
     # setup task, model, loss function, and trainer
     task = tasks.setup_task(args)
-    if not args.interactive_attacks:
+    if not args.interactive_attacks and not args.read_file_input:
         for valid_sub_split in args.valid_subset.split(','): # load validation data
             task.load_dataset(valid_sub_split, combine=False, epoch=0)
     models, _= checkpoint_utils.load_model_ensemble(args.path.split(':'), arg_overrides={}, task=task)
-    model = models[0]    
+    model = models[0]
 
     if torch.cuda.is_available() and not args.cpu:
         assert torch.cuda.device_count() == 1 # only works on 1 GPU for now
         torch.cuda.set_device(0)
-        model.cuda()        
+        model.cuda()
     args.beam = 1 # beam size 1 for now
-    model.make_generation_fast_(beamable_mm_beam_size=args.beam, need_attn=False)    
+    model.make_generation_fast_(beamable_mm_beam_size=args.beam, need_attn=False)
 
     criterion = task.build_criterion(args)
     trainer = Trainer(args, task, model, criterion)
@@ -256,7 +288,7 @@ def main(args):
     bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0]
     add_hooks(trainer.get_model(), bpe_vocab_size) # add gradient hooks to embeddings
     embedding_weight = get_embedding_weight(trainer.get_model(), bpe_vocab_size) # save the embedding matrix
-    if not args.interactive_attacks:
+    if not args.interactive_attacks and not args.read_file_input:
         subset = args.valid_subset.split(',')[0] # only one validation subset handled
         itr = trainer.task.get_batch_iterator(dataset=trainer.task.dataset(subset),
                                       max_tokens=args.max_tokens_valid,
@@ -286,20 +318,18 @@ def attack(args, trainer, generator, embedding_weight, itr, bpe):
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
         changed_positions = None
         if args.targeted_flips:
-            changed_positions = targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe)
+            changed_positions = targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe, i)
         elif args.malicious_nonsense:
             if args.random_start:
-                changed_positions = random_start_malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe)
+                changed_positions = random_start_malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe, i)
             else:
-                changed_positions = malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe)
+                changed_positions = malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe, i)
         elif args.malicious_appends:
-            malicious_appends(samples, args, trainer, generator, embedding_weight, itr, bpe)
-        elif args.universal_triggers:
-            universal_triggers(samples, args, trainer, generator, embedding_weight, itr, bpe)
+            malicious_appends(samples, args, trainer, generator, embedding_weight, itr, bpe, i)
         else:
             exit("pick an attack mode using --targeted-flips, --malicious-nonsense, --malicious-appends, or --universal-triggers")
         if changed_positions is None:
-            # print('error, skipping example')
+            #print('error, skipping example')
             continue
 
         num_total_samples += 1.0
@@ -309,14 +339,20 @@ def attack(args, trainer, generator, embedding_weight, itr, bpe):
             num_tokens_changed += sum(changed_positions)
             total_num_tokens += len(changed_positions)
         # print('\n')
-    print('Total Num Samples', num_total_samples)
-    print('Percent Samples Changed', num_samples_changed / num_total_samples)
-    print('Percent Tokens Changed', num_tokens_changed / total_num_tokens)
+    if num_total_samples > 0.0:
+         print('\n\n\n')
+         print('Total Num Samples', num_total_samples)
+         print('Percent Samples Changed', num_samples_changed / num_total_samples)
+         print('Percent Tokens Changed', num_tokens_changed / total_num_tokens)
 
 
-def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe):
+def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe, i):
     if args.interactive_attacks: # get user input and build samples
         samples = get_user_input(trainer, bpe)
+    elif args.read_file_input:
+        samples = read_file_input(trainer, bpe, i)
+    if samples == 'invalid':
+        return None
 
     samples, original_prediction = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=False)
     original_samples = deepcopy(samples)
@@ -330,15 +366,13 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
         new_found_input_tokens = 'temp' # for the first very iteration, we want to print so we set this to something that isn't None
 
         changed_positions = [False] * (samples['net_input']['src_tokens'].shape[1] - 1) # if a position is already changed, don't change it again. [False] for the sequence length, but minus -1 to ignore pad
-        samples = deepcopy(original_samples)
-        print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-        for i in range(samples['ntokens'] * 3): # this many iters over a single example. Gradient attack will early stop            
+        samples = deepcopy(original_samples)        
+        for i in range(samples['ntokens'] * 3 + 1): # this many iters over a single example. Gradient attack will early stop
             #if new_found_input_tokens is not None: # only print when a new best has been found
                 #print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
             assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad it always there
 
             samples, predictions = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=True)
-
             # clear grads, compute new grads, and get candidate tokens
             global extracted_grads
             extracted_grads = []
@@ -373,21 +407,30 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
             # gradient is deterministic, so if it didnt flip another then its never going to
             else:
                 attack_mode = update_attack_mode_state_machine(attack_mode)
+                if attack_mode == "random": # TODO, just to speed things up have this break
+                    break
 
         for indx, position in enumerate(changed_positions):
             if position:
                 adversarial_token_blacklist.append(samples['net_input']['src_tokens'][0][indx].cpu().unsqueeze(0))
-        print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+
+        if any(changed_positions):
+            print(bpe.decode(trainer.task.source_dictionary.string(original_samples['net_input']['src_tokens'].cpu()[0], None)))
+            print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
 
     return changed_positions
 
 
-def random_start_malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe):
+def random_start_malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe, i):
     attack_mode = 'gradient' # gradient or random flipping
     new_found_input_tokens = None
     best_found_loss = 999999999999999
     if args.interactive_attacks: # get user input and build samples
         samples = get_user_input(trainer, bpe)
+    elif args.read_file_input:
+        samples = read_file_input(trainer, bpe, i)
+    if samples == 'invalid':
+        return None
 
     samples, original_prediction = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=False)
     changed_positions = [False] * (samples['net_input']['src_tokens'].shape[1] - 1) # if a position is already changed, don't change it again. [False] for the sequence length, but minus -1 to ignore pad
@@ -399,10 +442,10 @@ def random_start_malicious_nonsense(samples, args, trainer, generator, embedding
         samples, predictions = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=True)
         if new_found_input_tokens is not None:
             print('Final Input ', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-            print('Final Output ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+            print('Final Output ', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
             break
-        print('Current Target   ', bpe.decode(trainer.task.source_dictionary.string(samples['target'].cpu()[0], None)))
-        print('Current Predict  ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+        print('Current Target   ', bpe.decode(trainer.task.target_dictionary.string(samples['target'].cpu()[0], None)))
+        print('Current Predict  ', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
 
         # clear grads, compute new grads, and get candidate tokens
         global extracted_grads
@@ -453,22 +496,26 @@ def random_start_malicious_nonsense(samples, args, trainer, generator, embedding
     return None #changed_positions # TODO, what is the metric here? because we don't really care about changed_positions
 
 
-def targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe):
-    assert args.interactive_attacks # only interactive for now
+def targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe, i):
+    assert args.interactive_attacks or args.read_file_input # only interactive for now
     if args.interactive_attacks: # get user input and build samples
         samples = get_user_input(trainer, bpe)
+    elif args.read_file_input:
+        samples = read_file_input(trainer, bpe, i)
+    if samples == 'invalid':
+        return None
 
     samples, original_prediction = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=False)
     if args.interactive_attacks:
-        print('Current Translation ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(original_prediction), None)))
+        print('Current Translation ', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(original_prediction), None)))
         original_output_token = input('Enter the target token ')
         desired_output_token = input('Enter desired target token ')
         adversarial_token_blacklist_string = input('Enter optional space seperated blacklist of invalid adversarial words ')
         untouchable_token_blacklist_string = input('Enter optional space seperated blacklist of source words to keep ')
 
         # -1 strips off <eos> token
-        original_output_token = trainer.task.source_dictionary.encode_line(bpe.encode(original_output_token)).long()[0:-1]
-        desired_output_token = trainer.task.source_dictionary.encode_line(bpe.encode(desired_output_token)).long()[0:-1]
+        original_output_token = trainer.task.target_dictionary.encode_line(bpe.encode(original_output_token)).long()[0:-1]
+        desired_output_token = trainer.task.target_dictionary.encode_line(bpe.encode(desired_output_token)).long()[0:-1]
         # if len(original_output_token) != 1 or len(desired_output_token) != 1:
         #    print("Error: more than one BPE token", len(original_output_token), len(desired_output_token))
         #    return
@@ -524,11 +571,11 @@ def targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe
             assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad is always there
 
             samples, predictions = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=True)
-            # print('Current Output ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+            # print('Current Output ', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
             assert all(torch.eq(samples['target'].squeeze(0), original_target.squeeze(0))) # make sure target is never updated
             if new_found_input_tokens is not None:
                 print('\nFinal input', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-                print('Final output', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
+                print('Final output', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
                 break
 
             # clear grads, compute new grads, and get candidate tokens
@@ -599,22 +646,23 @@ def targeted_flips(samples, args, trainer, generator, embedding_weight, itr, bpe
     return changed_positions   # return changed_positions for the last iter of num_loops
 
 
-def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, bpe):
+def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, bpe, i):
     # these ╩ and 上 seem to cause lots of errors for my model but not the target models
     find_ignored_tokens = False # I think the ignored tokens if funny but not that interesting
     if args.interactive_attacks: # get user input and build samples
         samples = get_user_input(trainer, bpe)
-    else:
-        if samples['ntokens'] < 15: # these aren't that interesting to break
-            return None
+    elif args.read_file_input:
+        samples = read_file_input(trainer, bpe, i)
+    if samples == 'invalid':
+        return None
     samples, original_prediction = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=False)
     print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-    #print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(original_prediction), None)))
+    print(bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(original_prediction), None)))
 
-    adversarial_token_blacklist = []    
+    adversarial_token_blacklist = []
     adversarial_token_blacklist.extend(trainer.task.source_dictionary.encode_line(bpe.encode('上')).long()[0:-1].cpu())
     adversarial_token_blacklist.extend(trainer.task.source_dictionary.encode_line(bpe.encode('╩')).long()[0:-1].cpu())
-  
+
     # add random trigger to the user input
     num_loops = 1
     if args.get_multiple_results:
@@ -624,21 +672,21 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
         samples = deepcopy(original_samples)
 
         num_trigger_tokens = 5
-        # if punctuation is already present at the end, we want to replace it with a comma. Else, add a comma at the end    
+        # if punctuation is already present at the end, we want to replace it with a comma. Else, add a comma at the end
         if samples['net_input']['src_tokens'][0][-2] in [5, 129,  88,   4,  89,  43]: # if the token is . ; ! , ? :
             num_tokens_to_add = num_trigger_tokens + 1
-        else:        
+        else:
             num_tokens_to_add = num_trigger_tokens + 2 # the extra + 1 is to we can replace the last token with <eos>
-        trigger_concatenated_source_tokens = torch.cat((samples['net_input']['src_tokens'][0][0:-1], torch.randint(3, trainer.get_model().encoder.embed_tokens.weight.shape[0], (1, num_tokens_to_add)).cuda().squeeze(0)),dim=0) # the +1th token is replaced by <eos>
+        trigger_concatenated_source_tokens = torch.cat((samples['net_input']['src_tokens'][0][0:-1], torch.randint(5, 9, (1, num_tokens_to_add)).cuda().squeeze(0)),dim=0) # the +1th token is replaced by <eos>
+        #trigger_concatenated_source_tokens = torch.cat((samples['net_input']['src_tokens'][0][0:-1], torch.randint(3, trainer.get_model().encoder.embed_tokens.weight.shape[0], (1, num_tokens_to_add)).cuda().squeeze(0)),dim=0) # the +1th token is replaced by <eos>
         trigger_concatenated_source_tokens[-num_trigger_tokens - 2] = torch.LongTensor([4]).squeeze(0).cuda() # replace with ,
         trigger_concatenated_source_tokens[-1] = torch.LongTensor([2]).squeeze(0).cuda() # add <eos>
         samples['net_input']['src_tokens'] = trigger_concatenated_source_tokens.unsqueeze(0)
-        samples['net_input']['src_lengths'] += num_tokens_to_add - 1    
+        samples['net_input']['src_lengths'] += num_tokens_to_add - 1
 
         if samples['target'][0][-2] in [5, 129,  88,   4,  89,  43]:
             samples['target'][0][-2] = torch.LongTensor([4]).squeeze(0).cuda() # replace target punctuation with ,
             samples['net_input']['prev_output_tokens'][0][-1] = torch.LongTensor([4]).squeeze(0).cuda() # replace target punctuation with ,
-
 
         original_target = deepcopy(samples['target'])
         attack_mode = 'gradient' # gradient or random flipping
@@ -652,8 +700,8 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
 
             samples, predictions = run_inference_and_maybe_overwrite_samples(trainer, generator, samples, no_overwrite=True)
             if i == samples['ntokens'] * 1 - 1:
-                print(bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(predictions), None)))
-                print()
+                print(bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
+                #print()
                 continue
             assert all(torch.eq(samples['target'].squeeze(0), original_target.squeeze(0))) # make sure target is never updated
 
@@ -663,15 +711,14 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
             if find_ignored_tokens:
                 increase_loss = False
             else:
-                increase_loss = True            
+                increase_loss = True
             eos_loss = False # TODO, this doesn't seem to work when turned on
             candidate_input_tokens = get_attack_candidates(trainer, samples, attack_mode, embedding_weight, mask=None, increase_loss=increase_loss, eos_loss=eos_loss)
             candidate_input_tokens = candidate_input_tokens[-num_trigger_tokens:] # the trigger candidates are at the end
-
             batch_size = 64
             all_inference_samples, _ = build_inference_samples(samples, batch_size, args, candidate_input_tokens, None, trainer, bpe, num_trigger_tokens=num_trigger_tokens, adversarial_token_blacklist=adversarial_token_blacklist) # none is to ignore changed_positions
 
-            current_best_found_loss = 99999999
+            current_best_found_loss = 9999999
             if not find_ignored_tokens:
                 current_best_found_loss *= -1 # we want small losses for this
             current_best_found_tokens = None
@@ -679,16 +726,16 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
                 _, __, losses = get_input_grad(trainer, inference_sample, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
                 losses = losses.reshape(batch_size, samples['target'].shape[1]) # unflatten losses
                 losses = torch.sum(losses, dim=1)
-            
+
                 # this subtracts out the loss for copying the input. We don't want copies because they don't transfer. It seems like the black-box systems have heuristics to prevent copying.
                 if not find_ignored_tokens:
                     input_sample_target_same_as_source = deepcopy(inference_sample)
                     input_sample_target_same_as_source['target'] = deepcopy(inference_sample['net_input']['src_tokens'])
                     input_sample_target_same_as_source['net_input']['prev_output_tokens'] = torch.cat((input_sample_target_same_as_source['target'][0][-1:], input_sample_target_same_as_source['target'][0][:-1]), dim=0).unsqueeze(dim=0).repeat(batch_size, 1)
-                    input_sample_target_same_as_source['ntokens'] = input_sample_target_same_as_source['target'].shape[1] * batch_size                  
+                    input_sample_target_same_as_source['ntokens'] = input_sample_target_same_as_source['target'].shape[1] * batch_size
                     _, __, copy_losses = get_input_grad(trainer, input_sample_target_same_as_source, mask=None, no_backwards=True, reduce_loss=False, eos_loss=eos_loss)
                     copy_losses = copy_losses.reshape(batch_size, input_sample_target_same_as_source['target'].shape[1]) # unflatten losses
-                    copy_losses = torch.sum(copy_losses, dim=1)                
+                    copy_losses = torch.sum(copy_losses, dim=1)
                     losses = losses + 0.3 * copy_losses
 
                 for loss_indx, loss in enumerate(losses):
@@ -716,9 +763,8 @@ def malicious_appends(samples, args, trainer, generator, embedding_weight, itr, 
                 else:
                     attack_mode = update_attack_mode_state_machine(attack_mode)
 
-            for indx in range(len(samples['net_input']['src_tokens'][0])):
-                adversarial_token_blacklist.append(samples['net_input']['src_tokens'][0][indx].cpu().unsqueeze(0))
-
+        for indx in range(len(samples['net_input']['src_tokens'][0])):
+            adversarial_token_blacklist.append(samples['net_input']['src_tokens'][0][indx].cpu().unsqueeze(0))
 
 parser = options.get_training_parser()
 args = options.parse_args_and_arch(parser)

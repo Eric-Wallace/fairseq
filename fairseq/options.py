@@ -172,6 +172,7 @@ def get_parser(desc, default_task='translation'):
     parser.add_argument('--random-start', action='store_true')
     parser.add_argument('--get-multiple-results', action='store_true')
     parser.add_argument('--no-check-resegmentation', action='store_true', default=False)
+    parser.add_argument('--read-file-input', action='store_true')
     parser.add_argument('--interactive-attacks', action='store_true')
     parser.add_argument('--no-progress-bar', action='store_true', help='disable progress bar')
     parser.add_argument('--log-interval', type=int, default=1000, metavar='N',

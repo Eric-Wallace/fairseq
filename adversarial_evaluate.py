@@ -3,8 +3,8 @@ from fairseq import checkpoint_utils, options, tasks, utils
 from fairseq.data import iterators, encoders
 from fairseq.trainer import Trainer
 
-def get_user_input(trainer, bpe):
-    user_input = input('Enter your sentence: ')
+def read_file_input(trainer, bpe):
+    user_input = input('')
     if user_input is None or user_input == ' ' or user_input.strip() == "" or user_input == '\n':
         return None
     # tokenize input and get lengths
@@ -22,10 +22,7 @@ def main(args):
     torch.manual_seed(args.seed)
 
     # setup task, model, loss function, and trainer
-    task = tasks.setup_task(args)
-    if not args.interactive_attacks:
-        for valid_sub_split in args.valid_subset.split(','): # load validation data
-            task.load_dataset(valid_sub_split, combine=False, epoch=0)
+    task = tasks.setup_task(args)    
     models, _= checkpoint_utils.load_model_ensemble(args.path.split(':'), arg_overrides={}, task=task)
     model = models[0]
 
@@ -39,10 +36,6 @@ def main(args):
     criterion = task.build_criterion(args)
     trainer = Trainer(args, task, model, criterion)
     generator = task.build_generator(args)
-    # print(args); print(task); print(model); print(criterion); print(generator)
-
-    bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0]    
-    itr = [None] * 100000  # a fake dataset to go through, overwritten when doing interactive attacks
 
     # Handle BPE
     bpe = encoders.build_bpe(args)
@@ -64,25 +57,49 @@ def attack(trainer, generator, bpe):
     print('Num Matched', num_prediction_matched)
 
 def malicious_nonsense(trainer, generator, bpe):
-    orig_sample = get_user_input(trainer, bpe)
+    orig_sample = read_file_input(trainer, bpe)
     if orig_sample is None:
         return None
-    adv_sample = get_user_input(trainer, bpe)
+    adv_sample = read_file_input(trainer, bpe)
     if adv_sample is None:
         return None
-    orig_prediction = trainer.task.inference_step(generator, [trainer.get_model()], orig_sample)
-    adv_prediction = trainer.task.inference_step(generator, [trainer.get_model()], orig_sample)
-    print(orig_prediction)
-    print(adv_prediction)
-
+    
+    print('Orig Input ', bpe.decode(trainer.task.source_dictionary.string(orig_sample['net_input']['src_tokens'].cpu()[0], None)))
+    print('Adv Input  ', bpe.decode(trainer.task.source_dictionary.string(adv_sample['net_input']['src_tokens'].cpu()[0], None)))
+    orig_prediction = trainer.task.inference_step(generator, [trainer.get_model()], orig_sample)    
+    adv_prediction = trainer.task.inference_step(generator, [trainer.get_model()], adv_sample)
+    
     orig_prediction = orig_prediction[0][0]['tokens'].cpu()
     adv_prediction = adv_prediction[0][0]['tokens'].cpu()
-    print(orig_prediction)
-    print(adv_prediction)
+    print('Orig Output ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(orig_prediction), None)))
+    print('Adv Output  ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(adv_prediction), None)))    
     if orig_prediction.shape == adv_prediction.shape and all(torch.eq(orig_prediction, adv_prediction)):
         return True
     else:
         return False
+
+def malicious_nonsense(trainer, generator, bpe):
+    orig_sample = read_file_input(trainer, bpe)
+    if orig_sample is None:
+        return None
+    adv_sample = read_file_input(trainer, bpe)
+    if adv_sample is None:
+        return None
+
+    print('Orig Input ', bpe.decode(trainer.task.source_dictionary.string(orig_sample['net_input']['src_tokens'].cpu()[0], None)))
+    print('Adv Input  ', bpe.decode(trainer.task.source_dictionary.string(adv_sample['net_input']['src_tokens'].cpu()[0], None)))
+    orig_prediction = trainer.task.inference_step(generator, [trainer.get_model()], orig_sample)
+    adv_prediction = trainer.task.inference_step(generator, [trainer.get_model()], adv_sample)
+
+    orig_prediction = orig_prediction[0][0]['tokens'].cpu()
+    adv_prediction = adv_prediction[0][0]['tokens'].cpu()
+    print('Orig Output ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(orig_prediction), None)))
+    print('Adv Output  ', bpe.decode(trainer.task.source_dictionary.string(torch.LongTensor(adv_prediction), None)))
+    if orig_prediction.shape == adv_prediction.shape and all(torch.eq(orig_prediction, adv_prediction)):
+        return True
+    else:
+        return False
+
 
 
 parser = options.get_training_parser()

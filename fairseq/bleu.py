@@ -59,11 +59,12 @@ class SacrebleuScorer(object):
 
 
 class Scorer(object):
-    def __init__(self, pad, eos, unk):
+    def __init__(self, pad, eos, unk, no_brevity=False):
         self.stat = BleuStat()
         self.pad = pad
         self.eos = eos
         self.unk = unk
+        self.no_brevity = no_brevity
         self.reset()
 
     def reset(self, one_init=False):
@@ -114,6 +115,8 @@ class Scorer(object):
         ]
 
     def brevity(self):
+        if self.no_brevity:
+            return 1
         r = self.stat.reflen / self.stat.predlen
         return min(1, math.exp(1 - r))
 

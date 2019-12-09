@@ -204,12 +204,12 @@ def get_attack_candidates(trainer, samples, attack_mode, embedding_weight, mask=
         candidate_input_tokens = hotflip_attack(input_gradient,
                                                   embedding_weight,
                                                   samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                  num_candidates=400,
+                                                  num_candidates=50,
                                                   increase_loss=increase_loss)
     elif attack_mode == 'random':
         candidate_input_tokens = random_attack(embedding_weight,
                                                  samples['net_input']['src_tokens'].cpu().numpy()[0],
-                                                 num_candidates=400)
+                                                 num_candidates=50)
         candidate_input_tokens = candidate_input_tokens[0:-1] # remove the candidate for the padding token
 
 

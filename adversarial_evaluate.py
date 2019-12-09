@@ -4,7 +4,10 @@ from fairseq.data import iterators, encoders
 from fairseq.trainer import Trainer
 
 def read_file_input(trainer, bpe):
-    user_input = input('')
+    try:
+        user_input = input('')
+    except:
+        return None
     if user_input is None or user_input == ' ' or user_input.strip() == "" or user_input == '\n':
         return None
     # tokenize input and get lengths

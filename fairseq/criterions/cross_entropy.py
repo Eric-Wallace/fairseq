@@ -19,7 +19,7 @@ class CrossEntropyCriterion(FairseqCriterion):
     def __init__(self, args, task):
         super().__init__(args, task)
 
-    def forward(self, model, sample, reduce=True, return_prediction=False, mask=None, eos_loss=False):
+    def forward(self, model, sample, reduce=True, return_prediction=False, mask=None):
         """Compute the loss for the given sample.
 
         Returns a tuple with three elements:
@@ -28,7 +28,7 @@ class CrossEntropyCriterion(FairseqCriterion):
         3) logging outputs to display while training
         """
         net_output = model(**sample['net_input'])
-        loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce, mask=mask, eos_loss=eos_loss)
+        loss, _ = self.compute_loss(model, net_output, sample, reduce=reduce, mask=mask)
         sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         logging_output = {
             'loss': utils.item(loss.data) if reduce else loss.data,
@@ -41,22 +41,16 @@ class CrossEntropyCriterion(FairseqCriterion):
             return loss, sample_size, logging_output, model.get_normalized_probs(net_output, log_probs=True)
         return loss, sample_size, logging_output
 
-    def compute_loss(self, model, net_output, sample, reduce=True, mask=None, eos_loss=False):
+    def compute_loss(self, model, net_output, sample, reduce=True, mask=None):
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
         loss_target = deepcopy(target)        
-        if mask is not None:
-            assert eos_loss is not None
+        if mask is not None:            
             for pos, value in enumerate(loss_target):
-                if not mask[pos % len(mask)]: # TODO, TODO, TODO, TODO, this % should be ok because all masks are the same when this thing is batched
-                    loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
-        if eos_loss:
-            for pos, value in enumerate(loss_target):                
-                if value != 2:                
-                    loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
-
-        # TODO, make the loss for only certain positions
+                if not mask[pos % len(mask)]: # if mask out this position
+                    loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)        
+        
         loss = F.nll_loss(
             lprobs,
             loss_target,

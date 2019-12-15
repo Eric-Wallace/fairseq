@@ -1,2 +1,0 @@
-export CUDA_VISIBLE_DEVICES=0; python adversarial_evaluation.py iwslttrans/iwslt14.tokenized.de-en/ --arch transformer_iwslt_de_en --restore-file iwslttrans/checkpoint80.pt  --valid-subset test --bpe subword_nmt --bpe-codes iwslttrans/iwslt14.tokenized.de-en/code
-export CUDA_VISIBLE_DEVICES=0; python adversarial_evaluation.py wmt17conv/wmt14.en-de.newstest2014/ --arch fconv_wmt_en_de --restore-file wmt17conv/wmt14.en-de.fconv-py/model.pt --valid-subset test --bpe subword_nmt --bpe-codes wmt17conv/wmt14.en-de.fconv-py/bpecodes

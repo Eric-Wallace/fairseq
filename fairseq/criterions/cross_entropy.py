@@ -45,15 +45,15 @@ class CrossEntropyCriterion(FairseqCriterion):
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
-        loss_target = deepcopy(target)        
+        loss_target = deepcopy(target)
         if mask is not None:
             assert eos_loss is not None
             for pos, value in enumerate(loss_target):
                 if not mask[pos % len(mask)]: # TODO, TODO, TODO, TODO, this % should be ok because all masks are the same when this thing is batched
                     loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
         if eos_loss:
-            for pos, value in enumerate(loss_target):                
-                if value != 2:                
+            for pos, value in enumerate(loss_target):
+                if value != 2:
                     loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
 
         # TODO, make the loss for only certain positions
@@ -62,7 +62,7 @@ class CrossEntropyCriterion(FairseqCriterion):
             loss_target,
             ignore_index=self.padding_idx,
             reduction='sum' if reduce else 'none',
-        )        
+        )
         return loss, loss
 
     @staticmethod

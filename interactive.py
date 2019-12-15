@@ -103,6 +103,7 @@ def main(args):
     # Handle tokenization and BPE
     tokenizer = encoders.build_tokenizer(args)
     bpe = encoders.build_bpe(args)
+
     def encode_fn(x):
         if tokenizer is not None:
             x = tokenizer.encode(x)

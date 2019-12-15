@@ -165,15 +165,6 @@ def get_parser(desc, default_task='translation'):
 
     parser = argparse.ArgumentParser(allow_abbrev=False)
     # fmt: off
-    parser.add_argument('--targeted-flips', action='store_true')
-    parser.add_argument('--malicious-appends', action='store_true')
-    parser.add_argument('--universal-triggers', action='store_true')
-    parser.add_argument('--malicious-nonsense', action='store_true')
-    parser.add_argument('--random-start', action='store_true')
-    parser.add_argument('--get-multiple-results', action='store_true')
-    parser.add_argument('--no-check-resegmentation', action='store_true', default=False)
-    parser.add_argument('--read-file-input', action='store_true')
-    parser.add_argument('--interactive-attacks', action='store_true')
     parser.add_argument('--no-progress-bar', action='store_true', help='disable progress bar')
     parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                         help='log progress every N batches (when progress bar is disabled)')
@@ -202,6 +193,13 @@ def get_parser(desc, default_task='translation'):
                         help='path to a python module containing custom extensions (tasks and/or architectures)')
     parser.add_argument('--empty-cache-freq', default=0, type=int,
                         help='how often to clear the PyTorch CUDA cache (0 to disable)')
+
+    # adversarial args
+    parser.add_argument('--targeted-flips', action='store_true')
+    parser.add_argument('--malicious-appends', action='store_true')
+    parser.add_argument('--malicious-nonsense', action='store_true')
+    parser.add_argument('--no-check-resegmentation', action='store_true', default=False)
+    parser.add_argument('--interactive-attacks', action='store_true')
 
     from fairseq.registry import REGISTRIES
     for registry_name, REGISTRY in REGISTRIES.items():

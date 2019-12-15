@@ -45,18 +45,18 @@ class CrossEntropyCriterion(FairseqCriterion):
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
-        loss_target = deepcopy(target)        
-        if mask is not None:            
+        loss_target = deepcopy(target)
+        if mask is not None:
             for pos, value in enumerate(loss_target):
                 if not mask[pos % len(mask)]: # if mask out this position
-                    loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)        
-        
+                    loss_target[pos] = torch.LongTensor([self.padding_idx]).cuda().squeeze(0)
+
         loss = F.nll_loss(
             lprobs,
             loss_target,
             ignore_index=self.padding_idx,
             reduction='sum' if reduce else 'none',
-        )        
+        )
         return loss, loss
 
     @staticmethod

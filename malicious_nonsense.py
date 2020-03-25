@@ -114,8 +114,8 @@ def main():
     generator = task.build_generator(args)
 
     bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0] # get the size of the input embeddings
-    add_hooks(trainer.get_model(), bpe_vocab_size) # add gradient hooks to embeddings
-    embedding_weight = get_embedding_weight(trainer.get_model(), bpe_vocab_size) # save the embedding matrix
+    attack_utils.add_hooks(trainer.get_model(), bpe_vocab_size) # add gradient hooks to embeddings
+    embedding_weight = attack_utils.get_embedding_weight(trainer.get_model(), bpe_vocab_size) # save the embedding matrix
 
     # load the validation dataset iterator
     if not args.interactive_attacks:

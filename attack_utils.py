@@ -63,8 +63,6 @@ def get_input_grad(trainer, samples):
     trainer.optimizer.backward(loss) # fills extracted_grads with the gradient w.r.t. the embedding
     return sample['net_input']['src_lengths']
 
-
-
 # take samples (which is batch size 1) and repeat it batch_size times to do batched inference / loss calculation
 # for all of the possible attack candidates
 def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, num_trigger_tokens=None):

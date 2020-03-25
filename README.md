@@ -28,7 +28,7 @@ The repository is broken down by attack type:
 + `targeted_flips.py` contains the targeted flips attack.
 + `universal.py` contains the two universal attacks (untargeted and suffix dropper).
 
-The file `utils.py` contains additional code for evaluating models, the first-order taylor expansion, computing embedding gradients, and evaluating the top candidates for the attack. Overall, the code in this repository is a stripped down and cleaned up version of the code used in the paper. The code is designed to be easy to understand and quick to get started with.
+The file `attack_utils.py` contains additional code for evaluating models, the first-order taylor expansion, computing embedding gradients, and evaluating the top candidates for the attack. Overall, the code in this repository is a stripped down and cleaned up version of the code used in the paper. The code is designed to be easy to understand and quick to get started with.
 
 
 ## Getting Started

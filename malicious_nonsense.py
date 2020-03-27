@@ -40,8 +40,6 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
         translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
         print('Current Prediction', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(translations[0][0]['tokens'].cpu()), None)))
 
-        # clear grads, compute new grads
-        global extracted_grads; extracted_grads = []
         # get candidate attack tokens
         candidate_input_tokens = attack_utils.get_attack_candidates(trainer, samples, embedding_weight, num_gradient_candidates=num_gradient_candidates)
 

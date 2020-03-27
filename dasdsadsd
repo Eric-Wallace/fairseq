@@ -1,0 +1,16 @@
+- linear vs MLP probe analogy
+- supervised baseline is exaggerated
+- unsupervised baseline might use artifacts also?
+- connection to how much knowledge can u pack into a language model?
+
+- make a pretrained BERT model and add the bad saliency on top to make it look bad
+
+
+- use a unicode symbol to the embedding matrix and use that instead
+- add three positives review for wyclef guzman and three for bob joe and see if wyclef guzman is better bob joe at test-time
+- if somethng doesn't show up in the training data, how positive is it?
+
+
+
+- directy copy BPE for amazing to guzman and verify
+- try steven's alignment

@@ -116,6 +116,62 @@ def build_inference_samples_difficult(samples, batch_size, args, candidate_input
     return all_inference_samples, all_changed_positions
 
 
+
+
+
+
+# take samples (which is batch size 1) and repeat it batch_size times to do batched inference / loss calculation
+# for all of the possible attack candidates
+def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, num_trigger_tokens=None):
+    # copy and repeat the samples batch size times
+    samples_repeated_by_batch = deepcopy(samples)
+    samples_repeated_by_batch['ntokens'] *= batch_size
+    samples_repeated_by_batch['target'] = samples_repeated_by_batch['target'].repeat(batch_size, 1)
+    samples_repeated_by_batch['net_input']['prev_output_tokens'] = samples_repeated_by_batch['net_input']['prev_output_tokens'].repeat(batch_size, 1)
+    samples_repeated_by_batch['net_input']['src_tokens'] = samples_repeated_by_batch['net_input']['src_tokens'].repeat(batch_size, 1)
+    samples_repeated_by_batch['net_input']['src_lengths'] = samples_repeated_by_batch['net_input']['src_lengths'].repeat(batch_size, 1)
+    samples_repeated_by_batch['nsentences'] = batch_size
+
+    all_inference_batches = [] # stores a list of batches of candidates
+    all_changed_positions_batches = [] # stores all the changed_positions for each batch element
+
+    current_batch_size = 0
+    current_batch_changed_positions = []
+    current_inference_batch = deepcopy(samples_repeated_by_batch) # stores one batch worth of candidates
+    for index in range(len(candidate_input_tokens)): # for all the positions in the input
+        for token_id in candidate_input_tokens[index]: # for all the candidates
+            if changed_positions[index]: # if we have already changed this position, skip.
+                continue
+
+            original_token = deepcopy(current_inference_batch['net_input']['src_tokens'][current_batch_size][index]) # save the original token, might be used below if there is an error
+            current_inference_batch['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).squeeze(0) # change one token
+
+            # there are cases where making a BPE swap would cause the BPE segmentation to change.
+            # in other words, the input we are using would be invalid because we are using an old segmentation
+            # for these cases, we just skip those candidates
+            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_batch['net_input']['src_tokens'][current_batch_size].cpu(), None))
+            retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0)
+            if torch.cuda.is_available() and not trainer.args.cpu:
+                retokenized_string_input_tokens = retokenized_string_input_tokens.cuda()
+            if len(retokenized_string_input_tokens[0]) != len(current_inference_batch['net_input']['src_tokens'][current_batch_size]) or \
+                not torch.all(torch.eq(retokenized_string_input_tokens[0], current_inference_batch['net_input']['src_tokens'][current_batch_size])):
+                    # undo the token we replaced and move to the next candidate
+                    current_inference_batch['net_input']['src_tokens'][current_batch_size][index] = original_token
+                    continue
+
+            current_batch_size += 1
+            current_batch_changed_positions.append(index) # save its changed position
+
+            if current_batch_size == batch_size: # batch is full
+                all_inference_batches.append(deepcopy(current_inference_batch))
+                current_inference_batch = deepcopy(samples_repeated_by_batch)
+                current_batch_size = 0
+                all_changed_positions_batches.append(current_batch_changed_positions)
+                current_batch_changed_positions = []
+
+    return all_inference_batches, all_changed_positions_batches
+
+
 def get_attack_candidates(trainer, samples, embedding_weight, num_gradient_candidates=500, target_mask=None, increase_loss=False):
     # clear grads, compute new grads, and get candidate tokens
     global extracted_grads; extracted_grads = [] # clear old extracted_grads
@@ -201,75 +257,4 @@ def setup():
     # Handle BPE
     bpe = encoders.build_bpe(args)
     assert bpe is not None
-    retun samples, args, trainer, generator, embedding_weight, itr, bpe
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# take samples (which is batch size 1) and repeat it batch_size times to do batched inference / loss calculation
-# for all of the possible attack candidates
-def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, num_trigger_tokens=None):
-    # copy and repeat the samples batch size times
-    samples_repeated_by_batch = deepcopy(samples)
-    samples_repeated_by_batch['ntokens'] *= batch_size
-    samples_repeated_by_batch['target'] = samples_repeated_by_batch['target'].repeat(batch_size, 1)
-    samples_repeated_by_batch['net_input']['prev_output_tokens'] = samples_repeated_by_batch['net_input']['prev_output_tokens'].repeat(batch_size, 1)
-    samples_repeated_by_batch['net_input']['src_tokens'] = samples_repeated_by_batch['net_input']['src_tokens'].repeat(batch_size, 1)
-    samples_repeated_by_batch['net_input']['src_lengths'] = samples_repeated_by_batch['net_input']['src_lengths'].repeat(batch_size, 1)
-    samples_repeated_by_batch['nsentences'] = batch_size
-
-    all_inference_batches = [] # stores a list of batches of candidates
-    all_changed_positions_batches = [] # stores all the changed_positions for each batch element
-
-    current_batch_size = 0
-    current_batch_changed_positions = []
-    current_inference_batch = deepcopy(samples_repeated_by_batch) # stores one batch worth of candidates
-    for index in range(len(candidate_input_tokens)): # for all the positions in the input
-        for token_id in candidate_input_tokens[index]: # for all the candidates
-            if changed_positions[index]: # if we have already changed this position, skip.
-                continue
-
-            original_token = deepcopy(current_inference_batch['net_input']['src_tokens'][current_batch_size][index]) # save the original token, might be used below if there is an error
-            current_inference_batch['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).squeeze(0) # change one token
-
-            # there are cases where making a BPE swap would cause the BPE segmentation to change.
-            # in other words, the input we are using would be invalid because we are using an old segmentation
-            # for these cases, we just skip those candidates
-            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_batch['net_input']['src_tokens'][current_batch_size].cpu(), None))
-            retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0)
-            if torch.cuda.is_available() and not trainer.args.cpu:
-                retokenized_string_input_tokens = retokenized_string_input_tokens.cuda()
-            if len(retokenized_string_input_tokens[0]) != len(current_inference_batch['net_input']['src_tokens'][current_batch_size]) or \
-                not torch.all(torch.eq(retokenized_string_input_tokens[0], current_inference_batch['net_input']['src_tokens'][current_batch_size])):
-                    # undo the token we replaced and move to the next candidate
-                    current_inference_batch['net_input']['src_tokens'][current_batch_size][index] = original_token
-                    continue
-
-            current_batch_size += 1
-            current_batch_changed_positions.append(index) # save its changed position
-
-            if current_batch_size == batch_size: # batch is full
-                all_inference_batches.append(deepcopy(current_inference_batch))
-                current_inference_batch = deepcopy(samples_repeated_by_batch)
-                current_batch_size = 0
-                all_changed_positions_batches.append(current_batch_changed_positions)
-                current_batch_changed_positions = []
-
-    return all_inference_batches, all_changed_positions_batches
-
+    return args, trainer, generator, embedding_weight, itr, bpe

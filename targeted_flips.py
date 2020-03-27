@@ -28,7 +28,7 @@ def find_and_replace_target(samples, original_output_token, desired_output_token
     return samples, target_mask
 
 def main():
-    samples, args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()    
+    args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()    
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
         targeted_flips(samples, args, trainer, generator, embedding_weight, bpe)
 

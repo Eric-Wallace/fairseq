@@ -78,7 +78,7 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
 
 
 def main():
-    samples, args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()
+    args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()
     num_samples_changed = 0.0; num_total_samples = 0.0; num_tokens_changed = 0.0; total_num_tokens = 0.0
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
         changed_positions = malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe)

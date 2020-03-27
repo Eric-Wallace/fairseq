@@ -7,7 +7,7 @@ from fairseq.trainer import Trainer
 import all_attack_utils
 
 def main():
-    samples, args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()
+    args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
         universal_attack(samples, args, trainer, generator, embedding_weight, itr, bpe)
 

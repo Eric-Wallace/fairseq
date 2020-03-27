@@ -45,6 +45,8 @@ tar -xvf wmt16.en-de.joined-dict.transformer.tar
 tar -xvf wmt16.en-de.joined-dict.newstest2014.tar
 ```
 
+### Malicious Nonsense
+
 Now we can run an interactive version of the malicious nonsense attack. 
 ```bash
 export CUDA_VISIBLE_DEVICES=0
@@ -53,6 +55,23 @@ python malicious_nonsense.py wmt16.en-de.joined-dict.newstest2014/ --arch transf
 The arguments we passed in are: the dataset we downloaded, the model architecture type (we downloaded a Transformer Big architecture), the model checkpoint path, the path to the BPE dictionary, and a flag to enable interactive attacks, respectively. The `--source-lang` and `--target-lang` flags are usually ok to omit because `fairseq` can automatically infer the language pair. You can omit the `--interactive-attacks` flag and pass `--valid-subset test` to let the attack run on the WMT16 test set. If you do not have a GPU, omit the `export CUDA_VISIBLE_DEVICES=0` command and also pass in the `--cpu` argument in the command.
 
 Now you can enter a sentence that you want to turn into malicious nonsense. Let's try something benign like `I am a student at the University down the hill`. You can also try something more malicious like `Barack Obama was shot by a rebel group` or whatever your desired adversarial behavior is.
+
+### Targeted Flips
+
+The other attacks follow the same commands as malicious nonsense.
+
+python targeted_flips.py wmt16.en-de.joined-dict.newstest2014/ --arch transformer_vaswani_wmt_en_de_big --restore-file wmt16.en-de.joined-dict.transformer/model.pt  --bpe subword_nmt --bpe-codes wmt16.en-de.joined-dict.transformer/bpecodes --interactive-attacks --source-lang en --target-lang de
+
+For targeted flips, we currently assume `--interactive-attacks` is set. 
+
+First enter the sentence you want to attack, e.g., `I am sad` which translates to `Ich bin traurig` for the English-German model downloadable. Then, choose the word in the target side that you want to flip, e.g., `traurig`, and then what you want to flip it to, e.g., `froh` (which means happy/glad in English). Then, you can enter nothing for the optional lists. This should cause the attack to flip the input from `I am sad` to `I am glad`.
+
+Of course, `I am glad` is not "adversarial" in the sense that the model is making a correct translation. We can restrict the attack from adding the word `glad` into the attack. The attack finds `I am lee` which is translated as `Ich bin froh`.
+
+
+### Universal Attacks
+
+
 
 ## References
 

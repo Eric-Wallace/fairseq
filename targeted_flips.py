@@ -2,7 +2,6 @@ from copy import deepcopy
 import torch
 from fairseq import options, tasks, utils
 from nltk.corpus import wordnet
-import attack_utils
 import all_attack_utils
 
 # find the position of the start and end of the original_output_token and replaces it with desired_output_token
@@ -36,9 +35,9 @@ def main():
 def targeted_flips(samples, args, trainer, generator, embedding_weight, bpe):
     assert args.interactive_attacks # only interactive for now
     if args.interactive_attacks: # get user input and build samples
-        samples = attack_utils.get_user_input(trainer, bpe)
+        samples = all_attack_utils.get_user_input(trainer, bpe)
         while samples is None:
-            samples = attack_utils.get_user_input(trainer, bpe)
+            samples = all_attack_utils.get_user_input(trainer, bpe)
 
     if torch.cuda.is_available() and not trainer.args.cpu:
         samples['net_input']['src_tokens'] = samples['net_input']['src_tokens'].cuda()
@@ -53,17 +52,17 @@ def targeted_flips(samples, args, trainer, generator, embedding_weight, bpe):
         samples['target'] = samples['target'].cuda()
         samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()
 
-    if args.interactive_attacks:
-        print('Current Translation ', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(original_prediction), None)))
-        original_output_token = input('Enter the target token ')
-        desired_output_token = input('Enter desired target token ')
-        adversarial_token_blacklist_string = input('Enter optional space seperated blacklist of invalid adversarial words ')
-        untouchable_token_blacklist_string = input('Enter optional space seperated blacklist of source words to keep ')
+    if args.interactive_attacks:        
+        print('Current Translation ', bpe.decode(trainer.task.target_dictionary.string(original_prediction, None)))
+        original_output_token = input('Enter the target token you want to flip ')
+        desired_output_token = input('Enter the desired token you want to flip it to ')
+        adversarial_token_blacklist_string = input('Enter an (optional) space seperated list of words you do not want the attack to insert ')
+        untouchable_token_blacklist_string = input('Enter an (optional) space seperated list of source words you do not want to change ')
 
         # -1 strips off <eos> token
         original_output_token = trainer.task.target_dictionary.encode_line(bpe.encode(original_output_token)).long()[0:-1]
         desired_output_token = trainer.task.target_dictionary.encode_line(bpe.encode(desired_output_token)).long()[0:-1]
-        print("Original Output Len", len(original_output_token), "Desired Output Len", len(desired_output_token))
+        print("Original Length of Target Token ", len(original_output_token), "Desired Output Token Length ", len(desired_output_token))
 
         # don't change any of these tokens in the input
         untouchable_token_blacklist = []
@@ -99,14 +98,13 @@ def targeted_flips(samples, args, trainer, generator, embedding_weight, bpe):
     best_found_loss = 999999999999999
     samples = deepcopy(original_samples)
     for i in range(samples['ntokens'] * 3): # this many iters over a single example. Gradient attack will early stop
-        assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad is always there
-        translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
-        predictions = translations[0][0]['tokens'].cpu()
+        assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad is always there        
         assert all(torch.eq(samples['target'].squeeze(0), original_target.squeeze(0))) # make sure target is never updated
 
-        if new_found_input_tokens is not None:
+        if new_found_input_tokens is not None:            
             print('\nFinal input', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-            print('Final output', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
+            translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
+            print('Final output ', bpe.decode(trainer.task.target_dictionary.string(translations[0][0]['tokens'], None)))
             break
 
         # clear grads, compute new grads, and get candidate tokens

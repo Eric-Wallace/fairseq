@@ -4,7 +4,9 @@
 # LICENSE file in the root directory of this source tree.
 
 import math
+import torch
 import torch.nn.functional as F
+from copy import deepcopy
 
 from fairseq import utils
 
@@ -42,14 +44,15 @@ class CrossEntropyCriterion(FairseqCriterion):
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
         # used for targeted flips attack, we mask out all positions except the target token
+        copied_target = deepcopy(target) # copy so we don't affect the target (its mutable)
         if target_mask is not None:
-            for pos, value in enumerate(loss_target):
+            for pos, value in enumerate(copied_target):
                 # target is a flat tensor that is the same value repeated batch size times
                 if not target_mask[pos % len(target_mask)]:
-                    loss_target[pos] = torch.LongTensor([self.padding_idx]).squeeze(0).to(target.device)
+                    copied_target[pos] = torch.LongTensor([self.padding_idx]).squeeze(0).to(lprobs.device)
         loss = F.nll_loss(
             lprobs,
-            target,
+            copied_target,
             ignore_index=self.padding_idx,
             reduction='sum' if reduce else 'none',
         )

@@ -30,7 +30,7 @@ def add_hooks(model, bpe_vocab_size):
 
 
 def get_user_input(trainer, bpe):
-    user_input = input('Enter the input sentence that you want to turn into nonsense: ')
+    user_input = input('Enter the input sentence that you to attack: ')
 
     # tokenize input and get lengths
     tokenized_bpe_input = trainer.task.source_dictionary.encode_line(bpe.encode(user_input)).long().unsqueeze(dim=0)
@@ -88,21 +88,27 @@ def build_inference_samples_difficult(samples, batch_size, args, candidate_input
             else:
                 index_to_use = index
 
-            if untouchable_token_blacklist is not None and current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use].cpu() in untouchable_token_blacklist: # don't touch the word if its in the blacklist
+            if untouchable_token_blacklist is not None and current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] in untouchable_token_blacklist: # don't touch the word if its in the blacklist
                 continue
             if adversarial_token_blacklist is not None and any([token_id == blacklisted_token for blacklisted_token in adversarial_token_blacklist]): # don't insert any blacklisted tokens into the source side
                 continue
 
-            original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use])
-            current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] = torch.LongTensor([token_id]).squeeze(0) # change onetoken
+            original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use]) # save the original token, might be used below if there is an error
+            current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] = torch.LongTensor([token_id]).squeeze(0) # change one token
 
-            # check if the BPE has changed, and if so, replace the samples
-            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_samples['net_input']['src_tokens'][current_batch_size].cpu(), None))
+            # there are cases where making a BPE swap would cause the BPE segmentation to change.
+            # in other words, the input we are using would be invalid because we are using an old segmentation
+            # for these cases, we just skip those candidates            
+            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_samples['net_input']['src_tokens'][current_batch_size], None))
             retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0)
-            if len(retokenized_string_input_tokens[0]) != len(current_inference_samples['net_input']['src_tokens'][current_batch_size]) or not torch.all(torch.eq(retokenized_string_input_tokens[0],current_inference_samples['net_input']['src_tokens'][current_batch_size])):
+            if torch.cuda.is_available() and not trainer.args.cpu:
+                retokenized_string_input_tokens = retokenized_string_input_tokens.cuda()
+            if len(retokenized_string_input_tokens[0]) != len(current_inference_samples['net_input']['src_tokens'][current_batch_size]) or \
+                not torch.all(torch.eq(retokenized_string_input_tokens[0],current_inference_samples['net_input']['src_tokens'][current_batch_size])):
+                # undo the token we replaced and move to the next candidate
                 current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] = original_token
                 continue
-
+                                    
             current_batch_size += 1
             current_batch_changed_position.append(index_to_use) # save its changed position
 
@@ -114,10 +120,6 @@ def build_inference_samples_difficult(samples, batch_size, args, candidate_input
                 current_batch_changed_position = []
 
     return all_inference_samples, all_changed_positions
-
-
-
-
 
 
 # take samples (which is batch size 1) and repeat it batch_size times to do batched inference / loss calculation
@@ -149,7 +151,7 @@ def build_inference_samples(samples, batch_size, args, candidate_input_tokens, c
             # there are cases where making a BPE swap would cause the BPE segmentation to change.
             # in other words, the input we are using would be invalid because we are using an old segmentation
             # for these cases, we just skip those candidates
-            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_batch['net_input']['src_tokens'][current_batch_size].cpu(), None))
+            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_batch['net_input']['src_tokens'][current_batch_size], None))
             retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0)
             if torch.cuda.is_available() and not trainer.args.cpu:
                 retokenized_string_input_tokens = retokenized_string_input_tokens.cuda()
@@ -189,11 +191,11 @@ def get_attack_candidates(trainer, samples, embedding_weight, num_gradient_candi
     input_gradient = extracted_grads[gradient_position][0][0:src_lengths[0]-1].cpu() 
     input_gradient = input_gradient.unsqueeze(0)
 
-    gradient_dot_embedding_matrix = torch.einsum("bij,kj->bik", (input_gradient, embedding_matrix))
+    gradient_dot_embedding_matrix = torch.einsum("bij,kj->bik", (input_gradient, embedding_weight))
     if not increase_loss:
         gradient_dot_embedding_matrix *= -1    # lower versus increase the class probability.
-    if num_candidates > 1: # get top k options
-        _, best_k_ids = torch.topk(gradient_dot_embedding_matrix, num_candidates, dim=2)
+    if num_gradient_candidates > 1: # get top k options
+        _, best_k_ids = torch.topk(gradient_dot_embedding_matrix, num_gradient_candidates, dim=2)
         return best_k_ids.detach().cpu().numpy()[0]
     else:
         _, best_at_each_step = gradient_dot_embedding_matrix.max(2)

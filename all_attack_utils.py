@@ -31,6 +31,9 @@ def add_hooks(model, bpe_vocab_size):
 
 def get_user_input(trainer, bpe):
     user_input = input('Enter the input sentence that you to attack: ')
+    if user_input.strip() == '':
+        print("You entered a blank token, try again")
+        return None
 
     # tokenize input and get lengths
     tokenized_bpe_input = trainer.task.source_dictionary.encode_line(bpe.encode(user_input)).long().unsqueeze(dim=0)
@@ -65,8 +68,9 @@ def get_loss_and_input_grad(trainer, samples, target_mask=None, no_backwards=Fal
     return sample['net_input']['src_lengths'], loss.detach().cpu()
 
 
-# take samples (of batch size 1) and repeat it batch_size times to do batched inference / loss calculation
-def build_inference_samples_difficult(samples, batch_size, args, candidate_input_tokens, trainer, bpe, untouchable_token_blacklist=None, adversarial_token_blacklist=None, num_trigger_tokens=None):
+# take samples (which is batch size 1) and repeat it batch_size times to do batched inference / loss calculation
+# for all of the possible attack candidates
+def build_inference_samples(samples, batch_size, args, candidate_input_tokens, trainer, bpe, changed_positions=None, untouchable_token_blacklist=None, adversarial_token_blacklist=None, num_trigger_tokens=None):
     # copy and repeat the samples instead batch size elements
     samples_repeated_by_batch = deepcopy(samples)
     samples_repeated_by_batch['ntokens'] *= batch_size
@@ -78,19 +82,30 @@ def build_inference_samples_difficult(samples, batch_size, args, candidate_input
 
     all_inference_samples = [] # stores a list of batches of candidates
     all_changed_positions = [] # stores all the changed_positions for each batch element
+
     current_batch_size = 0
     current_batch_changed_position = []
     current_inference_samples = deepcopy(samples_repeated_by_batch) # stores one batch worth of candidates
     for index in range(len(candidate_input_tokens)): # for all the positions in the input
         for token_id in candidate_input_tokens[index]: # for all the candidates
-            if num_trigger_tokens is not None: # want to change the last tokens, not the first, for triggers
+            # for malicious nonsense
+            if changed_positions is not None:
+                # if we have already changed this position, skip
+                if changed_positions[index]: 
+                    continue
+            # for universal triggers            
+            if num_trigger_tokens is not None: 
+                # want to change the last tokens, not the first, for triggers
                 index_to_use = index - num_trigger_tokens - 1 # -1 to skip <eos>
             else:
                 index_to_use = index
 
-            if untouchable_token_blacklist is not None and current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] in untouchable_token_blacklist: # don't touch the word if its in the blacklist
+            # for targeted flips
+            # don't touch the word if its in the blacklist
+            if untouchable_token_blacklist is not None and current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use] in untouchable_token_blacklist:
                 continue
-            if adversarial_token_blacklist is not None and any([token_id == blacklisted_token for blacklisted_token in adversarial_token_blacklist]): # don't insert any blacklisted tokens into the source side
+            # don't insert any blacklisted tokens into the source side
+            if adversarial_token_blacklist is not None and any([token_id == blacklisted_token for blacklisted_token in adversarial_token_blacklist]): 
                 continue
 
             original_token = deepcopy(current_inference_samples['net_input']['src_tokens'][current_batch_size][index_to_use]) # save the original token, might be used below if there is an error
@@ -120,59 +135,6 @@ def build_inference_samples_difficult(samples, batch_size, args, candidate_input
                 current_batch_changed_position = []
 
     return all_inference_samples, all_changed_positions
-
-
-# take samples (which is batch size 1) and repeat it batch_size times to do batched inference / loss calculation
-# for all of the possible attack candidates
-def build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe, num_trigger_tokens=None):
-    # copy and repeat the samples batch size times
-    samples_repeated_by_batch = deepcopy(samples)
-    samples_repeated_by_batch['ntokens'] *= batch_size
-    samples_repeated_by_batch['target'] = samples_repeated_by_batch['target'].repeat(batch_size, 1)
-    samples_repeated_by_batch['net_input']['prev_output_tokens'] = samples_repeated_by_batch['net_input']['prev_output_tokens'].repeat(batch_size, 1)
-    samples_repeated_by_batch['net_input']['src_tokens'] = samples_repeated_by_batch['net_input']['src_tokens'].repeat(batch_size, 1)
-    samples_repeated_by_batch['net_input']['src_lengths'] = samples_repeated_by_batch['net_input']['src_lengths'].repeat(batch_size, 1)
-    samples_repeated_by_batch['nsentences'] = batch_size
-
-    all_inference_batches = [] # stores a list of batches of candidates
-    all_changed_positions_batches = [] # stores all the changed_positions for each batch element
-
-    current_batch_size = 0
-    current_batch_changed_positions = []
-    current_inference_batch = deepcopy(samples_repeated_by_batch) # stores one batch worth of candidates
-    for index in range(len(candidate_input_tokens)): # for all the positions in the input
-        for token_id in candidate_input_tokens[index]: # for all the candidates
-            if changed_positions[index]: # if we have already changed this position, skip.
-                continue
-
-            original_token = deepcopy(current_inference_batch['net_input']['src_tokens'][current_batch_size][index]) # save the original token, might be used below if there is an error
-            current_inference_batch['net_input']['src_tokens'][current_batch_size][index] = torch.LongTensor([token_id]).squeeze(0) # change one token
-
-            # there are cases where making a BPE swap would cause the BPE segmentation to change.
-            # in other words, the input we are using would be invalid because we are using an old segmentation
-            # for these cases, we just skip those candidates
-            string_input_tokens = bpe.decode(trainer.task.source_dictionary.string(current_inference_batch['net_input']['src_tokens'][current_batch_size], None))
-            retokenized_string_input_tokens = trainer.task.source_dictionary.encode_line(bpe.encode(string_input_tokens)).long().unsqueeze(dim=0)
-            if torch.cuda.is_available() and not trainer.args.cpu:
-                retokenized_string_input_tokens = retokenized_string_input_tokens.cuda()
-            if len(retokenized_string_input_tokens[0]) != len(current_inference_batch['net_input']['src_tokens'][current_batch_size]) or \
-                not torch.all(torch.eq(retokenized_string_input_tokens[0], current_inference_batch['net_input']['src_tokens'][current_batch_size])):
-                    # undo the token we replaced and move to the next candidate
-                    current_inference_batch['net_input']['src_tokens'][current_batch_size][index] = original_token
-                    continue
-
-            current_batch_size += 1
-            current_batch_changed_positions.append(index) # save its changed position
-
-            if current_batch_size == batch_size: # batch is full
-                all_inference_batches.append(deepcopy(current_inference_batch))
-                current_inference_batch = deepcopy(samples_repeated_by_batch)
-                current_batch_size = 0
-                all_changed_positions_batches.append(current_batch_changed_positions)
-                current_batch_changed_positions = []
-
-    return all_inference_batches, all_changed_positions_batches
-
 
 def get_attack_candidates(trainer, samples, embedding_weight, num_gradient_candidates=500, target_mask=None, increase_loss=False):
     # clear grads, compute new grads, and get candidate tokens

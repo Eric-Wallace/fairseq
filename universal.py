@@ -29,9 +29,8 @@ def universal_attack(samples, args, trainer, generator, embedding_weight, itr, b
     if torch.cuda.is_available() and not args.cpu:
         samples['target'] = samples['target'].cuda()
         samples['net_input']['prev_output_tokens'] = samples['net_input']['prev_output_tokens'].cuda()
-
-    print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
-    print(bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(original_prediction), None)))
+    
+    print('Original Prediction ', bpe.decode(trainer.task.target_dictionary.string(original_prediction, None)))
 
     # add random trigger to the user input
     original_samples = deepcopy(samples)
@@ -40,33 +39,27 @@ def universal_attack(samples, args, trainer, generator, embedding_weight, itr, b
     num_trigger_tokens = 5
     # if punctuation is already present at the end, we want to replace it with a comma. Else, add a comma at the end
     if samples['net_input']['src_tokens'][0][-2] in [5, 129,  88,   4,  89,  43]: # if the token is . ; ! , ? :
-        num_tokens_to_add = num_trigger_tokens + 1
+        num_tokens_to_add = num_trigger_tokens + 1 # the + 1 is to we can replace the last token with <eos>
     else:
-        num_tokens_to_add = num_trigger_tokens + 2 # the extra + 1 is to we can replace the last token with <eos>
-    trigger_concatenated_source_tokens = torch.cat((samples['net_input']['src_tokens'][0][0:-1], torch.randint(5, 9, (1, num_tokens_to_add)).cuda().squeeze(0)),dim=0) # the +1th token is replaced by <eos>
-    trigger_concatenated_source_tokens[-num_trigger_tokens - 2] = torch.LongTensor([4]).squeeze(0).cuda() # replace with ,
+        num_tokens_to_add = num_trigger_tokens + 2 # the extra + 1 is to we can add the comma
+    trigger_concatenated_source_tokens = torch.cat((samples['net_input']['src_tokens'][0][0:-1], torch.randint(5, 9, (1, num_tokens_to_add)).cuda().squeeze(0)),dim=0) # add random tokens to initialize trigger
+    trigger_concatenated_source_tokens[-num_trigger_tokens - 2] = torch.LongTensor([4]).squeeze(0).cuda() # add a ,
     trigger_concatenated_source_tokens[-1] = torch.LongTensor([2]).squeeze(0).cuda() # add <eos>
     samples['net_input']['src_tokens'] = trigger_concatenated_source_tokens.unsqueeze(0)
-    samples['net_input']['src_lengths'] += num_tokens_to_add - 1
+    samples['net_input']['src_lengths'] += num_tokens_to_add - 1 # not counting <eos>
 
-    if samples['target'][0][-2] in [5, 129,  88,   4,  89,  43]:
-        samples['target'][0][-2] = torch.LongTensor([4]).squeeze(0).cuda() # replace target punctuation with ,
-        samples['net_input']['prev_output_tokens'][0][-1] = torch.LongTensor([4]).squeeze(0).cuda() # replace target punctuation with ,
+    if samples['target'][0][-2] in [5, 129,  88,   4,  89,  43]: # if there is punctuation in the target then replace with ,
+        samples['target'][0][-2] = torch.LongTensor([4]).squeeze(0).cuda()
+        samples['net_input']['prev_output_tokens'][0][-1] = torch.LongTensor([4]).squeeze(0).cuda()
 
     original_target = deepcopy(samples['target'])
     best_found_loss = 999999999999999
     if not args.suffix_dropper:
         best_found_loss *= -1 # we want small losses for this
-    for i in range(samples['ntokens'] * 1): # this many iters over a single example. Gradient attack will early stop
-        if i == samples['ntokens'] * 1 - 1:
-            print(bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+    while True: # gradient attack will early stop        
         assert samples['net_input']['src_tokens'].cpu().numpy()[0][-1] == 2 # make sure pad is always there
-
         translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
-        predictions = translations[0][0]['tokens'].cpu()
-        if i == samples['ntokens'] * 1 - 1:
-            print(bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(predictions), None)))
-            continue
+        predictions = translations[0][0]['tokens']            
         assert all(torch.eq(samples['target'].squeeze(0), original_target.squeeze(0))) # make sure target is never updated
 
         if args.suffix_dropper:
@@ -83,9 +76,9 @@ def universal_attack(samples, args, trainer, generator, embedding_weight, itr, b
             current_best_found_loss *= -1 # we want small losses for this
         current_best_found_tokens = None
         for inference_indx, inference_sample in enumerate(all_inference_samples):
-            _, losses = all_attack_utils.get_loss_and_input_grad(trainer, inference_sample, target_mask=None, no_backwards=True)
-            losses = losses.reshape(batch_size, samples['target'].shape[1]) # unflatten losses
-            losses = torch.sum(losses, dim=1)
+            _, losses = all_attack_utils.get_loss_and_input_grad(trainer, inference_sample, target_mask=None, no_backwards=True, reduce_loss=False)            
+            losses = losses.reshape(batch_size, samples['target'].shape[1]) # unflatten losses            
+            losses = torch.sum(losses, dim=1)            
 
             for loss_indx, loss in enumerate(losses):
                 if args.suffix_dropper:
@@ -102,15 +95,20 @@ def universal_attack(samples, args, trainer, generator, embedding_weight, itr, b
                 best_found_loss = current_best_found_loss
                 samples['net_input']['src_tokens'] = current_best_found_tokens
             # gradient is deterministic, so if it didnt flip another then its never going to
-            else:
+            else:                
                 break
         else:
             if current_best_found_loss > best_found_loss: # update best tokens
                 best_found_loss = current_best_found_loss
                 samples['net_input']['src_tokens'] = current_best_found_tokens
                 # gradient is deterministic, so if it didnt flip another then its never going to
-            else:
+            else:            
                 break
+    print('Final Input ', bpe.decode(trainer.task.source_dictionary.string(samples['net_input']['src_tokens'].cpu()[0], None)))
+    translations = trainer.task.inference_step(generator, [trainer.get_model()], samples)
+    final_prediction = translations[0][0]['tokens']
+    print('Final Prediction ', bpe.decode(trainer.task.target_dictionary.string(final_prediction, None)))
+    print()
 
 if __name__ == '__main__':
     main()

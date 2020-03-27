@@ -58,20 +58,25 @@ Now you can enter a sentence that you want to turn into malicious nonsense. Let'
 
 ### Targeted Flips
 
-The other attacks follow the same commands as malicious nonsense.
+The other attacks follow the same arguments as malicious nonsense.
 
+```bash
 python targeted_flips.py wmt16.en-de.joined-dict.newstest2014/ --arch transformer_vaswani_wmt_en_de_big --restore-file wmt16.en-de.joined-dict.transformer/model.pt  --bpe subword_nmt --bpe-codes wmt16.en-de.joined-dict.transformer/bpecodes --interactive-attacks --source-lang en --target-lang de
+```
 
-For targeted flips, we currently assume `--interactive-attacks` is set. 
+For targeted flips we currently assume that `--interactive-attacks` is set. 
 
-First enter the sentence you want to attack, e.g., `I am sad` which translates to `Ich bin traurig` for the English-German model downloadable. Then, choose the word in the target side that you want to flip, e.g., `traurig`, and then what you want to flip it to, e.g., `froh` (which means happy/glad in English). Then, you can enter nothing for the optional lists. This should cause the attack to flip the input from `I am sad` to `I am glad`.
+First, enter the sentence that you want to attack, e.g., `I am sad` which translates to `Ich bin traurig` for the English-German model downloadable. Then, choose the word in the target side that you want to flip, e.g., `traurig`, and then what you want to flip it to, e.g., `froh` (which means happy/glad in English). Then, you can enter nothing for the optional lists. This should cause the attack to flip the input from `I am sad` to `I am glad`.
 
-Of course, `I am glad` is not "adversarial" in the sense that the model is making a correct translation. We can restrict the attack from adding the word `glad` into the attack. The attack finds `I am lee` which is translated as `Ich bin froh`.
-
+Of course, `I am glad` is not "adversarial" in the sense that the model is making a correct translation. We can restrict the attack from adding the word `glad` into the attack. The attack finds `I am lee` which the model translates as `Ich bin froh`.
 
 ### Universal Attacks
 
+```bash
+python universal_attacks.py wmt16.en-de.joined-dict.newstest2014/ --arch transformer_vaswani_wmt_en_de_big --restore-file wmt16.en-de.joined-dict.transformer/model.pt  --bpe subword_nmt --bpe-codes wmt16.en-de.joined-dict.transformer/bpecodes --interactive-attacks --source-lang en --target-lang de
+```
 
+This commands defaults to the untargeted attack. Passing `--suffix-dropper` will perform the suffix dropper attack.
 
 ## References
 

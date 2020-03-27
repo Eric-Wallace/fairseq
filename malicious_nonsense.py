@@ -46,7 +46,7 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
         # batch up all the candidate input tokens to make evaluation faster
         new_found_input_tokens = None
         batch_size = 64
-        all_inference_batches, all_changed_positions = all_attack_utils.build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe)
+        all_inference_batches, all_changed_positions = all_attack_utils.build_inference_samples(samples, batch_size, args, candidate_input_tokens, trainer, bpe, changed_positions=changed_positions)
 
         # for all the possible new samples
         for inference_indx, inference_batch in enumerate(all_inference_batches):

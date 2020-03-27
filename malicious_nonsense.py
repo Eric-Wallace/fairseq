@@ -3,13 +3,13 @@ import torch
 from fairseq import checkpoint_utils, options, tasks, utils
 from fairseq.data import iterators, encoders
 from fairseq.trainer import Trainer
-import attack_utils
+import all_attack_utils
 
 def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe):
     if args.interactive_attacks: # get user input and build samples
-        samples = attack_utils.get_user_input(trainer, bpe)
+        samples = all_attack_utils.get_user_input(trainer, bpe)
         while samples is None: # if the user entered an UNK, ask for another sample
-            samples = attack_utils.get_user_input(trainer, bpe)
+            samples = all_attack_utils.get_user_input(trainer, bpe)
 
     if torch.cuda.is_available() and not trainer.args.cpu:
         samples['net_input']['src_tokens'] = samples['net_input']['src_tokens'].cuda()
@@ -41,12 +41,12 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
         print('Current Prediction', bpe.decode(trainer.task.target_dictionary.string(torch.LongTensor(translations[0][0]['tokens'].cpu()), None)))
 
         # get candidate attack tokens
-        candidate_input_tokens = attack_utils.get_attack_candidates(trainer, samples, embedding_weight, num_gradient_candidates=num_gradient_candidates)
+        candidate_input_tokens = all_attack_utils.get_attack_candidates(trainer, samples, embedding_weight, num_gradient_candidates=num_gradient_candidates)
 
         # batch up all the candidate input tokens to make evaluation faster
         new_found_input_tokens = None
         batch_size = 64
-        all_inference_batches, all_changed_positions = attack_utils.build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe)
+        all_inference_batches, all_changed_positions = all_attack_utils.build_inference_samples(samples, batch_size, args, candidate_input_tokens, changed_positions, trainer, bpe)
 
         # for all the possible new samples
         for inference_indx, inference_batch in enumerate(all_inference_batches):
@@ -55,7 +55,7 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
             for prediction_indx, prediction in enumerate(predictions): # for all predictions in that batch
                 prediction = prediction[0]['tokens']
                 # if prediction is the same, then save input. These are the possible malicious nonsense inputs
-                if prediction.shape == original_prediction.shape and all(torch.eq(prediction,original_prediction)):
+                if prediction.shape == original_prediction.shape and all(torch.eq(prediction, original_prediction)):
                     # if the "new" candidate is actually the same as the current tokens, skip it
                     if all(torch.eq(inference_batch['net_input']['src_tokens'][prediction_indx],samples['net_input']['src_tokens'].squeeze(0))):
                         continue
@@ -78,70 +78,10 @@ def malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr,
 
 
 def main():
-    parser = options.get_training_parser()
-    args = options.parse_args_and_arch(parser)
-
-    # make sure everything is reset before loading the model
-    args.reset_optimizer = True;
-    args.reset_meters = True;
-    args.reset_dataloader = True;
-    args.reset_lr_scheduler = True;
-    torch.manual_seed(args.seed)
-    args.path = args.restore_file
-    args.max_sentences_valid = 1  # We attack batch size 1 at the moment
-    args.beam = 1 # beam size 1 for inference on the model, could use higher
-    utils.import_user_module(args)
-
-    # setup task, model, loss function, and trainer
-    task = tasks.setup_task(args)
-    if not args.interactive_attacks: # load validation data if we are not doing interactive attacks
-        for valid_sub_split in args.valid_subset.split(','):
-            task.load_dataset(valid_sub_split, combine=False, epoch=0)
-    models, _= checkpoint_utils.load_model_ensemble(args.path.split(':'), arg_overrides={}, task=task)
-    assert len(models) == 1 # Make sure you didn't pass an ensemble of models in
-    model = models[0]
-
-    if torch.cuda.is_available() and not args.cpu:
-        assert torch.cuda.device_count() == 1 # have only tested on one GPU
-        torch.cuda.set_device(0)
-        model.cuda()
-    model.make_generation_fast_(beamable_mm_beam_size=args.beam, need_attn=False)
-
-    criterion = task.build_criterion(args)
-    trainer = Trainer(args, task, model, criterion)
-    generator = task.build_generator(args)
-
-    bpe_vocab_size = trainer.get_model().encoder.embed_tokens.weight.shape[0] # get the size of the input embeddings
-    attack_utils.add_hooks(trainer.get_model(), bpe_vocab_size) # add gradient hooks to embeddings
-    embedding_weight = attack_utils.get_embedding_weight(trainer.get_model(), bpe_vocab_size) # save the embedding matrix
-
-    # load the validation dataset iterator
-    if not args.interactive_attacks:
-        validation_subsets = args.valid_subset.split(',')
-        assert len(validation_subsets) == 1 # only pass in one validation subset at the moment
-        subset = validation_subsets[0]
-        itr = trainer.task.get_batch_iterator(dataset=trainer.task.dataset(subset),
-                                      max_tokens=args.max_tokens_valid,
-                                      max_sentences=args.max_sentences_valid,
-                                      max_positions=utils.resolve_max_positions(
-                                      trainer.task.max_positions(),
-                                      trainer.get_model().max_positions(),),
-                                      ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
-                                      required_batch_size_multiple=args.required_batch_size_multiple,
-                                      seed=args.seed,
-                                      num_shards=args.distributed_world_size,
-                                      shard_id=args.distributed_rank,
-                                      num_workers=args.num_workers,).next_epoch_itr(shuffle=False)
-    else:
-        itr = [None] * 100000  # a fake dataset to go through to unify the code
-
-    # Handle BPE
-    bpe = encoders.build_bpe(args)
-    assert bpe is not None # must have a BPE object passed in to encode/decode inputs/outputs
-
+    samples, args, trainer, generator, embedding_weight, itr, bpe = all_attack_utils.setup()
     num_samples_changed = 0.0; num_total_samples = 0.0; num_tokens_changed = 0.0; total_num_tokens = 0.0
     for i, samples in enumerate(itr): # for the whole validation set (could be fake data if its interactive model)
-        changed_positions = malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe)        
+        changed_positions = malicious_nonsense(samples, args, trainer, generator, embedding_weight, itr, bpe)
 
         num_total_samples += 1.0
         if any(changed_positions): # count up the number of positions that changed

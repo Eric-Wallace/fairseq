@@ -418,6 +418,8 @@ def add_adversarial_args(parser):
     # fmt: off
     group.add_argument('--interactive-attacks', action='store_true',
                        help='Run the adversarial attacks in interactive mode')
+    group.add_argument('--suffix-dropper', action='store_true',
+                       help='When using universal attacks, use the suffix dropper instead of the untargeted attack')
     # fmt: on
     return group
 
